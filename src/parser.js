@@ -79,6 +79,17 @@ const parseCommandWord = (tokens) => {
 };
 
 const parseReference = (tokens) => {
+  if (tokens.join(' ') === 'the ground' || tokens.join(' ') === 'ground') {
+    return {
+      kind: 'ground',
+      pronoun: null,
+      color: null,
+      size: null,
+      shape: null,
+      raw: tokens.join(' ').trim(),
+    };
+  }
+
   const reference = {
     kind: 'object',
     pronoun: null,
@@ -177,6 +188,14 @@ const resolveReference = (reference, objects, memory) => {
     };
   }
 
+  if (reference.kind === 'ground') {
+    return {
+      status: 'resolved',
+      matches: [{ id: 'ground', type: 'ground' }],
+      summary: 'resolved -> ground',
+    };
+  }
+
   if (reference.kind === 'pronoun') {
     if (reference.pronoun === 'it' && memory.lastSingular) {
       return {
@@ -239,24 +258,33 @@ export const parseCommand = (input, objects, memory = {}) => {
   const tokens = tokenize(input);
   const clauses = splitClauses(tokens).map(parseClause);
   const nextMemory = { ...memory };
+  let previousAction = null;
 
   const resolvedClauses = clauses.map((clause) => {
-    const directResolution = resolveReference(clause.directObject, objects, nextMemory);
+    const normalizedClause = clause.action === 'unknown' && previousAction
+      ? { ...clause, action: previousAction }
+      : clause;
+
+    const directResolution = resolveReference(normalizedClause.directObject, objects, nextMemory);
 
     if (directResolution.status === 'resolved' && directResolution.matches[0]) {
       nextMemory.lastSingular = directResolution.matches[0];
     }
 
-    const locationResolution = clause.location
-      ? resolveReference(clause.location.target, objects, nextMemory)
+    const locationResolution = normalizedClause.location
+      ? resolveReference(normalizedClause.location.target, objects, nextMemory)
       : null;
 
+    if (normalizedClause.action !== 'unknown') {
+      previousAction = normalizedClause.action;
+    }
+
     return {
-      ...clause,
+      ...normalizedClause,
       directResolution,
-      location: clause.location
+      location: normalizedClause.location
         ? {
-            ...clause.location,
+            ...normalizedClause.location,
             resolution: locationResolution,
           }
         : null,
