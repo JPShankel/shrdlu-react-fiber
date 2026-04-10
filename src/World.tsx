@@ -36,7 +36,7 @@ const World: React.FC = () => {
             cellColor="#6f6f6f"
             sectionSize={5}
             sectionColor="#9d4b4b"
-            fadeDistance={30}
+            fadeDistance={300}
             infiniteGrid
           />
 
