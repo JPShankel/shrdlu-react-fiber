@@ -1,8 +1,13 @@
 import React, { useState, KeyboardEvent, useRef, useEffect } from 'react';
 
+interface LogEntry {
+  type: 'user' | 'system';
+  text: string;
+}
+
 interface ConsoleProps {
   onCommand: (command: string) => void;
-  logs: string[];
+  logs: LogEntry[];
 }
 
 const Console: React.FC<ConsoleProps> = ({ onCommand, logs }) => {
@@ -32,14 +37,26 @@ const Console: React.FC<ConsoleProps> = ({ onCommand, logs }) => {
       padding: '15px',
       boxSizing: 'border-box',
       borderTop: '2px solid #333',
-      zIndex: 100
+      zIndex: 100,
+      textAlign: 'left'
     }}>
       <div style={{ height: '120px', overflowY: 'auto', marginBottom: '10px' }}>
-        {logs.map((log, i) => <div key={i}>{`> ${log}`}</div>)}
+        {logs.map((log, i) => (
+          <div
+            key={i}
+            style={{
+              color: log.type === 'user' ? '#ffd84d' : '#00ff41',
+              whiteSpace: 'pre-wrap',
+              marginBottom: '4px',
+            }}
+          >
+            {log.type === 'user' ? `> USER: ${log.text}` : `> SYS: ${log.text}`}
+          </div>
+        ))}
         <div ref={logEndRef} />
       </div>
       <div style={{ display: 'flex', borderTop: '1px solid #444', paddingTop: '10px' }}>
-        <span style={{ marginRight: '10px' }}>USER:</span>
+        <span style={{ marginRight: '10px', color: '#ffd84d' }}>USER:</span>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -47,7 +64,7 @@ const Console: React.FC<ConsoleProps> = ({ onCommand, logs }) => {
           autoFocus
           style={{
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
-            color: '#00ff41', fontSize: '16px', fontFamily: 'inherit'
+            color: '#ffd84d', fontSize: '16px', fontFamily: 'inherit', textAlign: 'left'
           }}
           placeholder="Type a command (e.g., 'add large blue cone')..."
         />

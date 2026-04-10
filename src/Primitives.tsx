@@ -8,24 +8,45 @@ const sizeScaleMap = {
 };
 
 const Cube: React.FC<{ object: WorldObject }> = ({ object }) => (
-  <mesh position={object.position} castShadow receiveShadow>
-    <boxGeometry args={[sizeScaleMap[object.size], sizeScaleMap[object.size], sizeScaleMap[object.size]]} />
-    <meshStandardMaterial color={object.color} />
-  </mesh>
+  <group position={object.position}>
+    {object.isHeld ? <pointLight color="#fff3a3" intensity={2.5} distance={3} /> : null}
+    <mesh castShadow receiveShadow>
+      <boxGeometry args={[sizeScaleMap[object.size], sizeScaleMap[object.size], sizeScaleMap[object.size]]} />
+      <meshStandardMaterial
+        color={object.color}
+        emissive={object.isHeld ? '#ffef88' : '#000000'}
+        emissiveIntensity={object.isHeld ? 0.85 : 0}
+      />
+    </mesh>
+  </group>
 );
 
 const Sphere: React.FC<{ object: WorldObject }> = ({ object }) => (
-  <mesh position={object.position} castShadow receiveShadow>
-    <sphereGeometry args={[0.45 * sizeScaleMap[object.size], 32, 32]} />
-    <meshStandardMaterial color={object.color} />
-  </mesh>
+  <group position={object.position}>
+    {object.isHeld ? <pointLight color="#fff3a3" intensity={2.5} distance={3} /> : null}
+    <mesh castShadow receiveShadow>
+      <sphereGeometry args={[0.45 * sizeScaleMap[object.size], 32, 32]} />
+      <meshStandardMaterial
+        color={object.color}
+        emissive={object.isHeld ? '#ffef88' : '#000000'}
+        emissiveIntensity={object.isHeld ? 0.85 : 0}
+      />
+    </mesh>
+  </group>
 );
 
 const Cone: React.FC<{ object: WorldObject }> = ({ object }) => (
-  <mesh position={object.position} castShadow receiveShadow>
-    <coneGeometry args={[0.45 * sizeScaleMap[object.size], sizeScaleMap[object.size], 32]} />
-    <meshStandardMaterial color={object.color} />
-  </mesh>
+  <group position={object.position}>
+    {object.isHeld ? <pointLight color="#fff3a3" intensity={2.5} distance={3} /> : null}
+    <mesh castShadow receiveShadow>
+      <coneGeometry args={[0.45 * sizeScaleMap[object.size], sizeScaleMap[object.size], 32]} />
+      <meshStandardMaterial
+        color={object.color}
+        emissive={object.isHeld ? '#ffef88' : '#000000'}
+        emissiveIntensity={object.isHeld ? 0.85 : 0}
+      />
+    </mesh>
+  </group>
 );
 
 export const ShapeRenderer: React.FC<{ object: WorldObject }> = ({ object }) => {

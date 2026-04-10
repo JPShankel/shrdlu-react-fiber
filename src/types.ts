@@ -8,4 +8,6 @@ export interface WorldObject {
   size: ObjectSize;
   color: ObjectColor;
   position: [number, number, number];
+  basePosition: [number, number, number];
+  isHeld: boolean;
 }
