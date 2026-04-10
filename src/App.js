@@ -55,12 +55,26 @@ function App() {
       return 'none';
     }
 
+    if (reference.kind === 'ground') {
+      return 'ground';
+    }
+
     if (reference.kind === 'pronoun') {
       return reference.pronoun;
     }
 
-    const parts = [reference.size, reference.color, reference.shape].filter(Boolean);
-    return parts.length ? parts.join(' ') : reference.raw || 'unspecified object';
+    const baseParts = [reference.size, reference.color, reference.shape].filter(Boolean);
+    const baseLabel = baseParts.length ? baseParts.join(' ') : reference.raw || 'unspecified object';
+
+    if (!reference.specifiers?.length) {
+      return baseLabel;
+    }
+
+    const specifierLabel = reference.specifiers
+      .map((specifier) => `${specifier.relation.replaceAll('_', ' ')} ${formatReference(specifier.target)}`)
+      .join(' ');
+
+    return `${baseLabel} ${specifierLabel}`.trim();
   };
 
   const buildParseLogs = (result) => {
@@ -88,7 +102,7 @@ function App() {
   };
 
   const describeObject = (object) => `${object.size} ${object.color} ${object.type}`;
-  const getHalfHeight = (object) => object.basePosition[1];
+  const getHalfHeight = (object) => sizeHeightMap[object.size];
   const getGroundedPosition = (object) => [object.basePosition[0], sizeHeightMap[object.size], object.basePosition[2]];
   const isStackingRelation = (relation) => relation === 'on' || relation === 'onto' || relation === 'on_top_of';
   const canBePlacedOnObject = (object) => object.type === 'cube' || object.type === 'cone';

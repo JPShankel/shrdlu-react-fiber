@@ -3,6 +3,20 @@ const CONJUNCTIONS = new Set(['and', 'then']);
 const COLOR_WORDS = new Set(['red', 'yellow', 'orange', 'green', 'blue']);
 const SIZE_WORDS = new Set(['small', 'medium', 'large']);
 const SHAPE_WORDS = new Set(['cube', 'sphere', 'cone', 'object', 'thing']);
+const REFERENCE_FILLER_WORDS = new Set(['that', 'which', 'is']);
+const SIZE_RANK = {
+  small: 1,
+  medium: 2,
+  large: 3,
+};
+const SIZE_HEIGHT = {
+  small: 0.35,
+  medium: 0.5,
+  large: 0.7,
+};
+const DISTANCE_TIE_EPSILON = 0.001;
+const AXIS_TOLERANCE = 0.2;
+const PLANAR_TOLERANCE = 0.35;
 
 const LOCATION_PATTERNS = [
   { relation: 'next_to', words: ['next', 'to'] },
@@ -27,6 +41,25 @@ const COMMAND_PATTERNS = [
   { action: 'put', words: ['put'] },
   { action: 'place', words: ['place'] },
   { action: 'move', words: ['move'] },
+];
+
+const REFERENCE_SPECIFIER_PATTERNS = [
+  { relation: 'nearest_to', words: ['nearest', 'to'] },
+  { relation: 'closest_to', words: ['closest', 'to'] },
+  { relation: 'furthest_from', words: ['furthest', 'from'] },
+  { relation: 'furthest_from', words: ['farthest', 'from'] },
+  { relation: 'next_to', words: ['next', 'to'] },
+  { relation: 'left_of', words: ['to', 'the', 'left', 'of'] },
+  { relation: 'right_of', words: ['to', 'the', 'right', 'of'] },
+  { relation: 'in_front_of', words: ['in', 'front', 'of'] },
+  { relation: 'behind', words: ['behind'] },
+  { relation: 'on_top_of', words: ['on', 'top', 'of'] },
+  { relation: 'underneath', words: ['underneath'] },
+  { relation: 'underneath', words: ['under'] },
+  { relation: 'underneath', words: ['below'] },
+  { relation: 'larger_than', words: ['larger', 'than'] },
+  { relation: 'larger_than', words: ['bigger', 'than'] },
+  { relation: 'smaller_than', words: ['smaller', 'than'] },
 ];
 
 const matchesPattern = (tokens, startIndex, words) =>
@@ -79,14 +112,17 @@ const parseCommandWord = (tokens) => {
 };
 
 const parseReference = (tokens) => {
-  if (tokens.join(' ') === 'the ground' || tokens.join(' ') === 'ground') {
+  const raw = tokens.join(' ').trim();
+
+  if (raw === 'the ground' || raw === 'ground') {
     return {
       kind: 'ground',
       pronoun: null,
       color: null,
       size: null,
       shape: null,
-      raw: tokens.join(' ').trim(),
+      specifiers: [],
+      raw,
     };
   }
 
@@ -96,7 +132,8 @@ const parseReference = (tokens) => {
     color: null,
     size: null,
     shape: null,
-    raw: tokens.join(' ').trim(),
+    specifiers: [],
+    raw,
   };
 
   if (!tokens.length) {
@@ -108,12 +145,38 @@ const parseReference = (tokens) => {
       ...reference,
       kind: 'pronoun',
       pronoun: tokens[0],
+      specifiers: [],
       raw: tokens[0],
     };
   }
 
-  tokens.forEach((token) => {
+  let specifierStart = -1;
+  let isNegatedSpecifier = false;
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (REFERENCE_FILLER_WORDS.has(tokens[index])) {
+      continue;
+    }
+
+    const negatedOffset = tokens[index] === 'not' ? 1 : 0;
+    const matchedSpecifier = REFERENCE_SPECIFIER_PATTERNS.find((pattern) =>
+      matchesPattern(tokens, index + negatedOffset, pattern.words)
+    );
+    if (matchedSpecifier) {
+      specifierStart = index;
+      isNegatedSpecifier = negatedOffset === 1;
+      break;
+    }
+  }
+
+  const baseTokens = specifierStart >= 0 ? tokens.slice(0, specifierStart) : tokens;
+
+  baseTokens.forEach((token) => {
     if (DETERMINERS.has(token)) {
+      return;
+    }
+
+    if (REFERENCE_FILLER_WORDS.has(token)) {
       return;
     }
 
@@ -131,6 +194,21 @@ const parseReference = (tokens) => {
       reference.shape = token;
     }
   });
+
+  if (specifierStart >= 0) {
+    const pattern = REFERENCE_SPECIFIER_PATTERNS.find((candidate) =>
+      matchesPattern(tokens, specifierStart + (isNegatedSpecifier ? 1 : 0), candidate.words)
+    );
+
+    if (pattern) {
+      const targetTokens = tokens.slice(specifierStart + (isNegatedSpecifier ? 1 : 0) + pattern.words.length);
+      reference.specifiers.push({
+        relation: pattern.relation,
+        negated: isNegatedSpecifier,
+        target: parseReference(targetTokens),
+      });
+    }
+  }
 
   return reference;
 };
@@ -151,10 +229,12 @@ const findLocationStart = (tokens, startIndex) => {
   return null;
 };
 
+const actionUsesDestination = (action) => action === 'put' || action === 'place' || action === 'move';
+
 const parseClause = (tokens) => {
   const command = parseCommandWord(tokens);
   const remaining = tokens.slice(command.consumed);
-  const locationStart = findLocationStart(remaining, 0);
+  const locationStart = actionUsesDestination(command.action) ? findLocationStart(remaining, 0) : null;
 
   if (!locationStart) {
     return {
@@ -178,8 +258,126 @@ const parseClause = (tokens) => {
 
 const describeObject = (object) => `${object.size} ${object.color} ${object.type}`;
 const pickRandom = (items) => items[Math.floor(Math.random() * items.length)];
+const getReferenceResolutionPool = (resolution) => resolution?.candidates ?? resolution?.matches ?? [];
+const getPlanarDistance = (left, right) => {
+  const deltaX = left.basePosition[0] - right.basePosition[0];
+  const deltaZ = left.basePosition[2] - right.basePosition[2];
+  return Math.hypot(deltaX, deltaZ);
+};
+const positionsMatch = (a, b, tolerance = DISTANCE_TIE_EPSILON) => Math.abs(a - b) < tolerance;
+const isDirectlyOnTopOf = (upperObject, lowerObject) => {
+  const [upperX, upperY, upperZ] = upperObject.basePosition;
+  const [lowerX, lowerY, lowerZ] = lowerObject.basePosition;
+  const expectedUpperY = lowerY + SIZE_HEIGHT[lowerObject.size] + SIZE_HEIGHT[upperObject.size];
 
-const resolveReference = (reference, objects, memory) => {
+  return (
+    positionsMatch(upperX, lowerX, AXIS_TOLERANCE) &&
+    positionsMatch(upperZ, lowerZ, AXIS_TOLERANCE) &&
+    positionsMatch(upperY, expectedUpperY, AXIS_TOLERANCE)
+  );
+};
+
+const applySpecifier = (matches, specifier, objects, memory) => {
+  const targetResolution = resolveReference(specifier.target, objects, memory);
+  const targetMatches = getReferenceResolutionPool(targetResolution);
+
+  if (targetResolution.status !== 'resolved' || !targetMatches.length) {
+    return {
+      matches: [],
+      summary: `${specifier.relation} target unresolved`,
+    };
+  }
+
+  let filteredMatches;
+
+  switch (specifier.relation) {
+    case 'nearest_to':
+    case 'closest_to': {
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      matches.forEach((object) => {
+        const distance = Math.min(...targetMatches.map((target) => getPlanarDistance(object, target)));
+        if (distance < bestDistance) {
+          bestDistance = distance;
+        }
+      });
+
+      filteredMatches = matches.filter((object) => {
+        const distance = Math.min(...targetMatches.map((target) => getPlanarDistance(object, target)));
+        return Math.abs(distance - bestDistance) < DISTANCE_TIE_EPSILON;
+      });
+      break;
+    }
+    case 'furthest_from': {
+      let bestDistance = Number.NEGATIVE_INFINITY;
+
+      matches.forEach((object) => {
+        const distance = Math.min(...targetMatches.map((target) => getPlanarDistance(object, target)));
+        if (distance > bestDistance) {
+          bestDistance = distance;
+        }
+      });
+
+      filteredMatches = matches.filter((object) => {
+        const distance = Math.min(...targetMatches.map((target) => getPlanarDistance(object, target)));
+        return Math.abs(distance - bestDistance) < DISTANCE_TIE_EPSILON;
+      });
+      break;
+    }
+    case 'larger_than':
+      filteredMatches = matches.filter((object) => targetMatches.some((target) => SIZE_RANK[object.size] > SIZE_RANK[target.size]));
+      break;
+    case 'smaller_than':
+      filteredMatches = matches.filter((object) => targetMatches.some((target) => SIZE_RANK[object.size] < SIZE_RANK[target.size]));
+      break;
+    case 'on_top_of':
+      filteredMatches = matches.filter((object) => targetMatches.some((target) => isDirectlyOnTopOf(object, target)));
+      break;
+    case 'underneath':
+      filteredMatches = matches.filter((object) => targetMatches.some((target) => isDirectlyOnTopOf(target, object)));
+      break;
+    case 'next_to':
+      filteredMatches = matches.filter((object) =>
+        targetMatches.some((target) => getPlanarDistance(object, target) <= 1.4 + PLANAR_TOLERANCE)
+      );
+      break;
+    case 'left_of':
+      filteredMatches = matches.filter((object) =>
+        targetMatches.some((target) => object.basePosition[0] < target.basePosition[0] - AXIS_TOLERANCE)
+      );
+      break;
+    case 'right_of':
+      filteredMatches = matches.filter((object) =>
+        targetMatches.some((target) => object.basePosition[0] > target.basePosition[0] + AXIS_TOLERANCE)
+      );
+      break;
+    case 'in_front_of':
+      filteredMatches = matches.filter((object) =>
+        targetMatches.some((target) => object.basePosition[2] < target.basePosition[2] - AXIS_TOLERANCE)
+      );
+      break;
+    case 'behind':
+      filteredMatches = matches.filter((object) =>
+        targetMatches.some((target) => object.basePosition[2] > target.basePosition[2] + AXIS_TOLERANCE)
+      );
+      break;
+    default:
+      filteredMatches = matches;
+      break;
+  }
+
+  if (specifier.negated) {
+    const filteredIds = new Set(filteredMatches.map((object) => object.id));
+    filteredMatches = matches.filter((object) => !filteredIds.has(object.id));
+  }
+
+  return {
+    matches: filteredMatches,
+    summary: `filtered by ${specifier.negated ? 'not ' : ''}${specifier.relation}`,
+  };
+};
+
+function resolveReference(reference, objects, memory) {
   if (!reference || (!reference.raw && reference.kind !== 'pronoun')) {
     return {
       status: 'missing',
@@ -228,22 +426,30 @@ const resolveReference = (reference, objects, memory) => {
     return true;
   });
 
-  if (matches.length === 1) {
+  const filteredMatches = reference.specifiers.reduce((currentMatches, specifier) => {
+    if (!currentMatches.length) {
+      return currentMatches;
+    }
+
+    return applySpecifier(currentMatches, specifier, objects, memory).matches;
+  }, matches);
+
+  if (filteredMatches.length === 1) {
     return {
       status: 'resolved',
-      matches,
-      summary: `resolved -> ${describeObject(matches[0])}`,
+      matches: filteredMatches,
+      summary: `resolved -> ${describeObject(filteredMatches[0])}`,
     };
   }
 
-  if (matches.length > 1) {
-    const chosen = pickRandom(matches);
+  if (filteredMatches.length > 1) {
+    const chosen = pickRandom(filteredMatches);
 
     return {
       status: 'resolved',
       matches: [chosen],
-      candidates: matches,
-      summary: `ambiguous -> randomly chose ${describeObject(chosen)} from ${matches.map(describeObject).join(', ')}`,
+      candidates: filteredMatches,
+      summary: `ambiguous -> randomly chose ${describeObject(chosen)} from ${filteredMatches.map(describeObject).join(', ')}`,
     };
   }
 
@@ -252,7 +458,7 @@ const resolveReference = (reference, objects, memory) => {
     matches: [],
     summary: 'no matching object',
   };
-};
+}
 
 export const parseCommand = (input, objects, memory = {}) => {
   const tokens = tokenize(input);
