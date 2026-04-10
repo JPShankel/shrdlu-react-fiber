@@ -1,6 +1,12 @@
 import React, { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, ContactShadows } from '@react-three/drei';
+import { ShapeRenderer } from './Primitives.tsx';
+import type { WorldObject } from './types.ts';
+
+interface WorldProps {
+  objects: WorldObject[];
+}
 
 /**
  * World Component
@@ -9,7 +15,7 @@ import { OrbitControls, Grid, ContactShadows } from '@react-three/drei';
  * reference system and the lighting environment required for rendering 
  * primitive objects.
  */
-const World: React.FC = () => {
+const World: React.FC<WorldProps> = ({ objects }) => {
   return (
     <div id="shrdlu-world-container" style={{ width: '100%', height: '100vh', background: '#e0e0e0' }}>
       <Canvas 
@@ -39,6 +45,10 @@ const World: React.FC = () => {
             fadeDistance={300}
             infiniteGrid
           />
+
+          {objects.map((object) => (
+            <ShapeRenderer key={object.id} object={object} />
+          ))}
 
           <ContactShadows position={[0, 0, 0]} opacity={0.25} scale={20} blur={2} far={4.5} />
           <OrbitControls makeDefault minPolarAngle={0} maxPolarAngle={Math.PI / 2.1} />

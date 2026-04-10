@@ -1,32 +1,42 @@
 import React from 'react';
-import { WorldObject } from '../types';
+import { WorldObject } from './types.ts';
 
-const Box: React.FC<{ object: WorldObject }> = ({ object }) => (
+const sizeScaleMap = {
+  small: 0.7,
+  medium: 1,
+  large: 1.4,
+};
+
+const Cube: React.FC<{ object: WorldObject }> = ({ object }) => (
   <mesh position={object.position} castShadow receiveShadow>
-    <boxGeometry args={[1, 1, 1]} />
+    <boxGeometry args={[sizeScaleMap[object.size], sizeScaleMap[object.size], sizeScaleMap[object.size]]} />
     <meshStandardMaterial color={object.color} />
   </mesh>
 );
 
 const Sphere: React.FC<{ object: WorldObject }> = ({ object }) => (
   <mesh position={object.position} castShadow receiveShadow>
-    <sphereGeometry args={[0.6, 32, 32]} />
+    <sphereGeometry args={[0.45 * sizeScaleMap[object.size], 32, 32]} />
     <meshStandardMaterial color={object.color} />
   </mesh>
 );
 
-const Cylinder: React.FC<{ object: WorldObject }> = ({ object }) => (
+const Cone: React.FC<{ object: WorldObject }> = ({ object }) => (
   <mesh position={object.position} castShadow receiveShadow>
-    <cylinderGeometry args={[0.5, 0.5, 1, 32]} />
+    <coneGeometry args={[0.45 * sizeScaleMap[object.size], sizeScaleMap[object.size], 32]} />
     <meshStandardMaterial color={object.color} />
   </mesh>
 );
 
 export const ShapeRenderer: React.FC<{ object: WorldObject }> = ({ object }) => {
   switch (object.type) {
-    case 'box': return <Box object={object} />;
-    case 'sphere': return <Sphere object={object} />;
-    case 'cylinder': return <Cylinder object={object} />;
-    default: return null;
+    case 'cube':
+      return <Cube object={object} />;
+    case 'sphere':
+      return <Sphere object={object} />;
+    case 'cone':
+      return <Cone object={object} />;
+    default:
+      return null;
   }
 };

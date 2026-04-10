@@ -1,16 +1,11 @@
-import { Type, Static } from '@sinclair/typebox';
+export type ObjectShape = 'cube' | 'sphere' | 'cone';
+export type ObjectSize = 'small' | 'medium' | 'large';
+export type ObjectColor = 'red' | 'yellow' | 'orange' | 'green' | 'blue';
 
-export const ShapeTypeSchema = Type.Union([
-  Type.Literal('box'),
-  Type.Literal('sphere'),
-  Type.Literal('cylinder'),
-]);
-
-export const WorldObjectSchema = Type.Object({
-  id: Type.String(),
-  type: ShapeTypeSchema,
-  color: Type.String(),
-  position: Type.Tuple([Type.Number(), Type.Number(), Type.Number()]),
-});
-
-export type WorldObject = Static<typeof WorldObjectSchema>;
+export interface WorldObject {
+  id: string;
+  type: ObjectShape;
+  size: ObjectSize;
+  color: ObjectColor;
+  position: [number, number, number];
+}
