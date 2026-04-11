@@ -1,8 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-test('renders learn react link', () => {
+jest.mock('./World.tsx', () => () => <div data-testid="world" />);
+
+test('renders the SHRDLU console boot log', () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  expect(screen.getByTestId('world')).toBeInTheDocument();
+  expect(screen.getByText(/SHRDLU system online\./i)).toBeInTheDocument();
 });

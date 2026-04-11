@@ -19,6 +19,42 @@ You may also see any lint errors in the console.
 Launches the test runner in the interactive watch mode.\
 See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
 
+## Supabase Session Saving
+
+The app includes a Supabase client and automatically saves the current session after each command.
+On startup, it also attempts to restore the most recently updated saved session.
+
+Create a `sessions` table in Supabase with columns compatible with this payload:
+
+- `client_session_id` `text` unique not null
+- `last_command` `text`
+- `command_history` `jsonb` not null
+- `held_object_id` `text`
+- `objects` `jsonb` not null
+- `logs` `jsonb` not null
+- `parser_memory` `jsonb`
+- `updated_at` `timestamptz`
+
+Example SQL:
+
+```sql
+create table if not exists public.sessions (
+  id uuid primary key default gen_random_uuid(),
+  client_session_id text unique not null,
+  last_command text,
+  command_history jsonb not null default '[]'::jsonb,
+  held_object_id text,
+  objects jsonb not null,
+  logs jsonb not null,
+  parser_memory jsonb,
+  updated_at timestamptz default timezone('utc', now())
+);
+```
+
+`command_history` stores the rolling session command list and is capped at 25 entries in the client.
+
+The client reads either `REACT_APP_SUPABASE_*` or `NEXT_PUBLIC_SUPABASE_*` environment variables. If you change env values while the dev server is running, restart `npm start`.
+
 ### `npm run build`
 
 Builds the app for production to the `build` folder.\

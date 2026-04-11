@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './App.css';
 import World from './World.tsx';
 import Console from './Console.tsx';
 import { parseCommand } from './parser';
+import { createClientSessionId, loadLatestSession, saveSession } from './lib/sessionStore';
 
 const sizeHeightMap = {
   small: 0.35,
@@ -12,6 +13,7 @@ const sizeHeightMap = {
 
 const HOLD_LIFT = 0.6;
 const LATERAL_GAP = 1.4;
+const COMMAND_HISTORY_LIMIT = 25;
 
 const createObject = ({ id, type, size, color, x, z }) => {
   const basePosition = [x, sizeHeightMap[size], z];
@@ -49,6 +51,46 @@ function App() {
   ]);
   const [parserMemory, setParserMemory] = useState({});
   const [heldObjectId, setHeldObjectId] = useState(null);
+  const [commandHistory, setCommandHistory] = useState([]);
+  const sessionIdRef = useRef(createClientSessionId());
+
+  useEffect(() => {
+    let isMounted = true;
+
+    loadLatestSession().then((result) => {
+      if (!isMounted || !result.ok || !result.data) {
+        if (!isMounted || result.skipped || result.ok) {
+          return;
+        }
+
+        setLogs((prev) => [
+          ...prev,
+          createLogEntry('system', `Session autoload failed: ${result.error.message}.`),
+        ]);
+        return;
+      }
+
+      const restoredLogs = Array.isArray(result.data.logs) ? result.data.logs : [];
+      const restoredObjects = Array.isArray(result.data.objects) ? result.data.objects : [];
+      const restoredHistory = Array.isArray(result.data.command_history)
+        ? result.data.command_history.slice(-COMMAND_HISTORY_LIMIT)
+        : [];
+
+      sessionIdRef.current = result.data.client_session_id || sessionIdRef.current;
+      setObjects(restoredObjects);
+      setHeldObjectId(result.data.held_object_id ?? null);
+      setParserMemory(result.data.parser_memory ?? {});
+      setCommandHistory(restoredHistory);
+      setLogs([
+        ...restoredLogs,
+        createLogEntry('system', 'Restored the most recent saved session.'),
+      ]);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const formatReference = (reference) => {
     if (!reference) {
@@ -637,21 +679,43 @@ function App() {
       executionLogs.push(...result.logs);
     });
 
+    const nextLogs = [...logs, userEntry, ...parseLogs, ...executionLogs];
+    const nextCommandHistory = [...commandHistory, cmd].slice(-COMMAND_HISTORY_LIMIT);
+
+    if (!handledAnyClause) {
+      if (parsed.clauses.some((clause) => clause.action !== 'unknown')) {
+        nextLogs.push(createLogEntry('system', 'OK. I parsed the command into actions, object references, and location references.'));
+      } else {
+        nextLogs.push(createLogEntry('system', "I don't understand that command yet."));
+      }
+    }
+
     setObjects(workingObjects);
     setHeldObjectId(workingHeldObjectId);
     setParserMemory(workingMemory);
-    setLogs((prev) => {
-      const nextLogs = [...prev, userEntry, ...parseLogs, ...executionLogs];
+    setCommandHistory(nextCommandHistory);
+    setLogs(nextLogs);
 
-      if (!handledAnyClause) {
-        if (parsed.clauses.some((clause) => clause.action !== 'unknown')) {
-          nextLogs.push(createLogEntry('system', 'OK. I parsed the command into actions, object references, and location references.'));
-        } else {
-          nextLogs.push(createLogEntry('system', "I don't understand that command yet."));
-        }
+    saveSession({
+      sessionId: sessionIdRef.current,
+      command: cmd,
+      commandHistory: nextCommandHistory,
+      objects: workingObjects,
+      logs: nextLogs,
+      parserMemory: workingMemory,
+      heldObjectId: workingHeldObjectId,
+    }).then((result) => {
+      if (result.ok || result.skipped) {
+        return;
       }
 
-      return nextLogs;
+      setLogs((prev) => [
+        ...prev,
+        createLogEntry(
+          'system',
+          `Session save failed: ${result.error.message}. Check your Supabase table and environment configuration.`
+        ),
+      ]);
     });
   };
 
