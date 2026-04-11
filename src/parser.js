@@ -121,6 +121,9 @@ const parseReference = (tokens) => {
       color: null,
       size: null,
       shape: null,
+      excludedColors: [],
+      excludedSizes: [],
+      excludedShapes: [],
       specifiers: [],
       raw,
     };
@@ -132,6 +135,9 @@ const parseReference = (tokens) => {
     color: null,
     size: null,
     shape: null,
+    excludedColors: [],
+    excludedSizes: [],
+    excludedShapes: [],
     specifiers: [],
     raw,
   };
@@ -145,6 +151,9 @@ const parseReference = (tokens) => {
       ...reference,
       kind: 'pronoun',
       pronoun: tokens[0],
+      excludedColors: [],
+      excludedSizes: [],
+      excludedShapes: [],
       specifiers: [],
       raw: tokens[0],
     };
@@ -171,6 +180,8 @@ const parseReference = (tokens) => {
 
   const baseTokens = specifierStart >= 0 ? tokens.slice(0, specifierStart) : tokens;
 
+  let pendingNegation = false;
+
   baseTokens.forEach((token) => {
     if (DETERMINERS.has(token)) {
       return;
@@ -180,18 +191,38 @@ const parseReference = (tokens) => {
       return;
     }
 
+    if (token === 'not') {
+      pendingNegation = true;
+      return;
+    }
+
     if (COLOR_WORDS.has(token)) {
-      reference.color = token;
+      if (pendingNegation) {
+        reference.excludedColors.push(token);
+      } else {
+        reference.color = token;
+      }
+      pendingNegation = false;
       return;
     }
 
     if (SIZE_WORDS.has(token)) {
-      reference.size = token;
+      if (pendingNegation) {
+        reference.excludedSizes.push(token);
+      } else {
+        reference.size = token;
+      }
+      pendingNegation = false;
       return;
     }
 
     if (SHAPE_WORDS.has(token) && token !== 'object' && token !== 'thing') {
-      reference.shape = token;
+      if (pendingNegation) {
+        reference.excludedShapes.push(token);
+      } else {
+        reference.shape = token;
+      }
+      pendingNegation = false;
     }
   });
 
@@ -415,11 +446,23 @@ function resolveReference(reference, objects, memory) {
       return false;
     }
 
+    if (reference.excludedShapes.includes(object.type)) {
+      return false;
+    }
+
     if (reference.color && object.color !== reference.color) {
       return false;
     }
 
+    if (reference.excludedColors.includes(object.color)) {
+      return false;
+    }
+
     if (reference.size && object.size !== reference.size) {
+      return false;
+    }
+
+    if (reference.excludedSizes.includes(object.size)) {
       return false;
     }
 

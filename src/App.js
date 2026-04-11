@@ -63,7 +63,12 @@ function App() {
       return reference.pronoun;
     }
 
-    const baseParts = [reference.size, reference.color, reference.shape].filter(Boolean);
+    const negativeParts = [
+      ...(reference.excludedSizes ?? []).map((value) => `not ${value}`),
+      ...(reference.excludedColors ?? []).map((value) => `not ${value}`),
+      ...(reference.excludedShapes ?? []).map((value) => `not ${value}`),
+    ];
+    const baseParts = [reference.size, reference.color, reference.shape, ...negativeParts].filter(Boolean);
     const baseLabel = baseParts.length ? baseParts.join(' ') : reference.raw || 'unspecified object';
 
     if (!reference.specifiers?.length) {
