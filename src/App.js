@@ -12,22 +12,57 @@ import {
   saveSession,
 } from './lib/sessionStore';
 
-const sizeHeightMap = {
+const objectHalfHeightMap = {
   small: 0.35,
   medium: 0.5,
   large: 0.7,
 };
+const boxInteriorSizeMap = {
+  small: 0.7,
+  medium: 1,
+  large: 1.4,
+  jumbo: 3.1,
+};
+const boxInteriorHeightMap = {
+  small: 0.7,
+  medium: 1,
+  large: 1.4,
+  jumbo: 1.4,
+};
+const boxWallThicknessMap = {
+  small: 0.1,
+  medium: 0.12,
+  large: 0.16,
+  jumbo: 0.2,
+};
+const getObjectHalfHeightByType = (type, size) =>
+  type === 'box'
+    ? (boxInteriorHeightMap[size] + boxWallThicknessMap[size]) / 2
+    : objectHalfHeightMap[size];
 
 const HOLD_LIFT = 0.6;
 const LATERAL_GAP = 1.4;
 const COMMAND_HISTORY_LIMIT = 25;
-const SHAPES = ['cube', 'sphere', 'cone'];
-const SIZES = ['small', 'medium', 'large'];
+const SHAPES = ['cube', 'sphere', 'cone', 'box'];
+const NON_BOX_SIZES = ['small', 'medium', 'large'];
+const BOX_SIZES = ['small', 'medium', 'large', 'jumbo'];
 const COLORS = ['red', 'yellow', 'orange', 'green', 'blue'];
 const DEFAULT_SCENE_COUNT = 5;
+const BOX_CONSTRAINTS = {
+  small: { capacity: 1, maxItemSize: 'small' },
+  medium: { capacity: 1, maxItemSize: 'medium' },
+  large: { capacity: 1, maxItemSize: 'large' },
+  jumbo: { capacity: 4, maxItemSize: 'large' },
+};
+const SIZE_RANK = {
+  small: 1,
+  medium: 2,
+  large: 3,
+  jumbo: 4,
+};
 
 const createObject = ({ id, type, size, color, x, z }) => {
-  const basePosition = [x, sizeHeightMap[size], z];
+  const basePosition = [x, getObjectHalfHeightByType(type, size), z];
 
   return {
     id,
@@ -37,6 +72,7 @@ const createObject = ({ id, type, size, color, x, z }) => {
     position: [...basePosition],
     basePosition,
     isHeld: false,
+    containerId: null,
   };
 };
 
@@ -44,16 +80,24 @@ const createLogEntry = (type, text) => ({ type, text });
 const createObjectId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const POSITION_EPSILON = 0.001;
 const pickRandom = (items) => items[Math.floor(Math.random() * items.length)];
+const getPlacementRange = (count) => Math.max(3, Math.ceil(Math.sqrt(Math.max(count, 1))) * 1.8);
+const getRandomCoordinate = (count) => {
+  const range = getPlacementRange(count);
+  return Math.random() * range * 2 - range;
+};
 const createSeededObjects = (count) =>
   Array.from({ length: count }, () =>
-    createObject({
-      id: createObjectId(),
-      type: pickRandom(SHAPES),
-      size: pickRandom(SIZES),
-      color: pickRandom(COLORS),
-      x: Math.random() * 6 - 3,
-      z: Math.random() * 6 - 3,
-    })
+    {
+      const type = pickRandom(SHAPES);
+      return createObject({
+        id: createObjectId(),
+        type,
+        size: pickRandom(type === 'box' ? BOX_SIZES : NON_BOX_SIZES),
+        color: pickRandom(COLORS),
+        x: getRandomCoordinate(count),
+        z: getRandomCoordinate(count),
+      });
+    }
   );
 
 function App() {
@@ -67,8 +111,8 @@ function App() {
   const [logs, setLogs] = useState([
     createLogEntry('system', 'SHRDLU system online.'),
     createLogEntry('system', 'World seeded with sample objects.'),
-    createLogEntry('system', 'Supported shapes: cube, sphere, cone.'),
-    createLogEntry('system', 'Supported sizes: small, medium, large.'),
+    createLogEntry('system', 'Supported shapes: cube, sphere, cone, box.'),
+    createLogEntry('system', 'Supported sizes: small, medium, large, plus jumbo boxes.'),
     createLogEntry('system', 'Supported colors: red, yellow, orange, green, blue.'),
     createLogEntry('system', 'Parser ready for object, command, and location references.'),
   ]);
@@ -76,7 +120,7 @@ function App() {
   const [heldObjectId, setHeldObjectId] = useState(null);
   const [commandHistory, setCommandHistory] = useState([]);
   const [activeSessionName, setActiveSessionName] = useState(null);
-  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(true);
   const sessionIdRef = useRef(createClientSessionId());
 
   useEffect(() => {
@@ -96,7 +140,7 @@ function App() {
       }
 
       const restoredLogs = Array.isArray(result.data.logs) ? result.data.logs : [];
-      const restoredObjects = Array.isArray(result.data.objects) ? result.data.objects : [];
+      const restoredObjects = Array.isArray(result.data.objects) ? syncContainedObjects(result.data.objects) : [];
       const restoredHistory = Array.isArray(result.data.command_history)
         ? result.data.command_history.slice(-COMMAND_HISTORY_LIMIT)
         : [];
@@ -236,12 +280,163 @@ function App() {
 
     return `${items.slice(0, -1).map(describeObject).join(', ')}, and ${describeObject(items[items.length - 1])}`;
   };
-  const getHalfHeight = (object) => sizeHeightMap[object.size];
-  const getGroundedPosition = (object) => [object.basePosition[0], sizeHeightMap[object.size], object.basePosition[2]];
+  const formatCoordinate = (value) => {
+    const rounded = Math.round(value * 10) / 10;
+    return Number.isInteger(rounded) ? `${rounded}.0` : `${rounded}`;
+  };
+  const isBox = (object) => object?.type === 'box';
+  const getSizeRank = (size) => SIZE_RANK[size] ?? 0;
+  const getHalfHeight = (object) => getObjectHalfHeightByType(object.type, object.size);
+  const getGroundedPosition = (object) => [object.basePosition[0], getHalfHeight(object), object.basePosition[2]];
   const isStackingRelation = (relation) => relation === 'on' || relation === 'onto' || relation === 'on_top_of';
-  const canBePlacedOnObject = (object) => object.type === 'cube' || object.type === 'cone';
+  const canBePlacedOnObject = (object) => object.type === 'cube' || object.type === 'cone' || object.type === 'box';
   const canSupportPlacedObject = (object) => object.type === 'cube';
   const positionsMatch = (a, b) => Math.abs(a - b) < POSITION_EPSILON;
+  const getObjectsInContainer = (workingObjects, containerId) =>
+    workingObjects.filter((object) => object.containerId === containerId);
+  const getDescendantIds = (workingObjects, rootId) => {
+    const descendantIds = new Set();
+    const queue = [rootId];
+
+    while (queue.length) {
+      const currentId = queue.shift();
+      workingObjects.forEach((object) => {
+        if (object.containerId === currentId && !descendantIds.has(object.id)) {
+          descendantIds.add(object.id);
+          queue.push(object.id);
+        }
+      });
+    }
+
+    return descendantIds;
+  };
+  const getContainerAnchorPosition = (container) => (container.isHeld ? container.position : container.basePosition);
+  const describeObjectLocation = (object, workingObjects) => {
+    if (object.isHeld) {
+      return `The ${describeObject(object)} is currently being held.`;
+    }
+
+    if (object.containerId) {
+      const container = workingObjects.find((candidate) => candidate.id === object.containerId);
+      if (container) {
+        return `The ${describeObject(object)} is in the ${describeObject(container)}.`;
+      }
+    }
+
+    const supportingObject = workingObjects.find((candidate) => candidate.id !== object.id && isDirectlyOnTopOf(object, candidate));
+    if (supportingObject) {
+      return `The ${describeObject(object)} is on top of the ${describeObject(supportingObject)}.`;
+    }
+
+    return `The ${describeObject(object)} is on the ground near x=${formatCoordinate(object.basePosition[0])}, z=${formatCoordinate(object.basePosition[2])}.`;
+  };
+  const getContainedBasePosition = (container, item, slotIndex) => {
+    const [containerX, containerY, containerZ] = getContainerAnchorPosition(container);
+    const containerHalfHeight = getHalfHeight(container);
+    const itemHalfHeight = getHalfHeight(item);
+    const floorY = containerY - containerHalfHeight + itemHalfHeight + 0.03;
+
+    if (container.size !== 'jumbo') {
+      return [containerX, floorY, containerZ];
+    }
+
+    const slotOffsets = [
+      [-boxInteriorSizeMap.jumbo * 0.25, -boxInteriorSizeMap.jumbo * 0.25],
+      [boxInteriorSizeMap.jumbo * 0.25, -boxInteriorSizeMap.jumbo * 0.25],
+      [-boxInteriorSizeMap.jumbo * 0.25, boxInteriorSizeMap.jumbo * 0.25],
+      [boxInteriorSizeMap.jumbo * 0.25, boxInteriorSizeMap.jumbo * 0.25],
+    ];
+    const [offsetX, offsetZ] = slotOffsets[slotIndex] ?? [0, 0];
+
+    return [containerX + offsetX, floorY, containerZ + offsetZ];
+  };
+  const syncContainedObjects = (workingObjects) => {
+    const objectMap = new Map(workingObjects.map((object) => [object.id, { ...object }]));
+    const childrenByContainer = new Map();
+
+    workingObjects.forEach((object) => {
+      if (!object.containerId) {
+        return;
+      }
+
+      if (!childrenByContainer.has(object.containerId)) {
+        childrenByContainer.set(object.containerId, []);
+      }
+
+      childrenByContainer.get(object.containerId).push(object.id);
+    });
+
+    const syncChildren = (containerId) => {
+      const container = objectMap.get(containerId);
+      const childIds = childrenByContainer.get(containerId) ?? [];
+
+      childIds.forEach((childId, slotIndex) => {
+        const child = objectMap.get(childId);
+        if (!container || !child) {
+          return;
+        }
+
+        const basePosition = getContainedBasePosition(container, child, slotIndex);
+        child.basePosition = basePosition;
+        child.position = child.isHeld ? [basePosition[0], basePosition[1] + HOLD_LIFT, basePosition[2]] : [...basePosition];
+        objectMap.set(childId, child);
+        syncChildren(childId);
+      });
+    };
+
+    workingObjects.forEach((object) => {
+      if (!object.containerId) {
+        syncChildren(object.id);
+      }
+    });
+
+    return workingObjects.map((object) => objectMap.get(object.id) ?? object);
+  };
+  const canObjectFitInBox = (item, box, workingObjects) => {
+    if (!isBox(box)) {
+      return {
+        ok: false,
+        reason: `The ${describeObject(box)} is not a box.`,
+      };
+    }
+
+    const constraints = BOX_CONSTRAINTS[box.size];
+    const directContents = getObjectsInContainer(workingObjects, box.id);
+    const occupancy = directContents.filter((candidate) => candidate.id !== item.id).length;
+
+    if (occupancy >= constraints.capacity) {
+      return {
+        ok: false,
+        reason: `The ${describeObject(box)} is full.`,
+      };
+    }
+
+    if (getSizeRank(item.size) > getSizeRank(constraints.maxItemSize)) {
+      return {
+        ok: false,
+        reason: `The ${describeObject(item)} is too large for the ${describeObject(box)}.`,
+      };
+    }
+
+    if (item.id === box.id) {
+      return {
+        ok: false,
+        reason: 'I cannot place an object inside itself.',
+      };
+    }
+
+    if (getDescendantIds(workingObjects, item.id).has(box.id)) {
+      return {
+        ok: false,
+        reason: 'I cannot place a box inside one of its contents.',
+      };
+    }
+
+    return {
+      ok: true,
+      reason: null,
+    };
+  };
 
   const isDirectlyOnTopOf = (upperObject, lowerObject) => {
     const [upperX, upperY, upperZ] = upperObject.basePosition;
@@ -301,7 +496,7 @@ function App() {
     }
   };
 
-  const buildObjectFromReference = (reference) => {
+  const buildObjectFromReference = (reference, objectCount = 1) => {
     const type = reference.shape;
     const size = reference.size ?? 'medium';
     const color = reference.color ?? 'green';
@@ -310,13 +505,17 @@ function App() {
       return null;
     }
 
+    if (size === 'jumbo' && type !== 'box') {
+      return null;
+    }
+
     return createObject({
       id: createObjectId(),
       type,
       size,
       color,
-      x: Math.random() * 6 - 3,
-      z: Math.random() * 6 - 3,
+      x: getRandomCoordinate(objectCount),
+      z: getRandomCoordinate(objectCount),
     });
   };
 
@@ -342,7 +541,7 @@ function App() {
     });
 
     return {
-      objects: nextObjects,
+      objects: syncContainedObjects(nextObjects),
       heldObjectId: null,
       releasedObject,
     };
@@ -390,6 +589,7 @@ function App() {
       placedObject = {
         ...object,
         isHeld: false,
+        containerId: null,
         basePosition: groundedPosition,
         position: groundedPosition,
       };
@@ -398,7 +598,7 @@ function App() {
     });
 
     return {
-      objects: nextObjects,
+      objects: syncContainedObjects(nextObjects),
       heldObjectId: currentHeldObjectId === movingObject.id ? null : currentHeldObjectId,
       placedObject,
     };
@@ -429,6 +629,7 @@ function App() {
       return {
         ...object,
         isHeld: true,
+        containerId: null,
         position: [
           object.basePosition[0],
           object.basePosition[1] + HOLD_LIFT,
@@ -438,7 +639,7 @@ function App() {
     });
 
     return {
-      objects: nextObjects,
+      objects: syncContainedObjects(nextObjects),
       heldObjectId: targetObject.id,
       releasedDescription,
       droppedObjects,
@@ -457,6 +658,7 @@ function App() {
       placedObject = {
         ...object,
         isHeld: false,
+        containerId: null,
         basePosition: [...nextBasePosition],
         position: [...nextBasePosition],
       };
@@ -465,7 +667,31 @@ function App() {
     });
 
     return {
-      objects: nextObjects,
+      objects: syncContainedObjects(nextObjects),
+      heldObjectId: currentHeldObjectId === movingObject.id ? null : currentHeldObjectId,
+      placedObject,
+    };
+  };
+
+  const placeObjectInBox = (workingObjects, currentHeldObjectId, movingObject, boxObject) => {
+    let placedObject = null;
+
+    const nextObjects = workingObjects.map((object) => {
+      if (object.id !== movingObject.id) {
+        return object;
+      }
+
+      placedObject = {
+        ...object,
+        isHeld: false,
+        containerId: boxObject.id,
+      };
+
+      return placedObject;
+    });
+
+    return {
+      objects: syncContainedObjects(nextObjects),
       heldObjectId: currentHeldObjectId === movingObject.id ? null : currentHeldObjectId,
       placedObject,
     };
@@ -473,10 +699,11 @@ function App() {
 
   const shuffleObjects = (workingObjects, currentHeldObjectId) =>
     workingObjects.map((object) => {
+      const objectCount = workingObjects.length;
       const basePosition = [
-        Math.random() * 6 - 3,
-        sizeHeightMap[object.size],
-        Math.random() * 6 - 3,
+        getRandomCoordinate(objectCount),
+        getHalfHeight(object),
+        getRandomCoordinate(objectCount),
       ];
 
       return {
@@ -511,7 +738,7 @@ function App() {
     };
 
     if (clause.action === 'add') {
-      const newObject = buildObjectFromReference(clause.directObject);
+      const newObject = buildObjectFromReference(clause.directObject, workingObjects.length + 1);
 
       if (!newObject) {
         return {
@@ -519,7 +746,7 @@ function App() {
           objects: workingObjects,
           heldObjectId: currentHeldObjectId,
           memory: workingMemory,
-          logs: [createLogEntry('system', 'Error. Please specify a shape to add: cube, sphere, or cone.')],
+          logs: [createLogEntry('system', 'Error. Please specify a valid object such as a cube, sphere, cone, or box. Jumbo size is only valid for boxes.')],
         };
       }
 
@@ -557,7 +784,7 @@ function App() {
     }
 
     if (clause.action === 'shuffle') {
-      const nextObjects = shuffleObjects(workingObjects, currentHeldObjectId);
+      const nextObjects = syncContainedObjects(shuffleObjects(workingObjects, currentHeldObjectId));
 
       return {
         handled: true,
@@ -697,13 +924,16 @@ function App() {
         };
       }
 
+      const removedIds = getDescendantIds(workingObjects, targetObject.id);
+      removedIds.add(targetObject.id);
+
       return {
         handled: true,
-        objects: workingObjects.filter((object) => object.id !== targetObject.id),
-        heldObjectId: currentHeldObjectId === targetObject.id ? null : currentHeldObjectId,
+        objects: workingObjects.filter((object) => !removedIds.has(object.id)),
+        heldObjectId: removedIds.has(currentHeldObjectId) ? null : currentHeldObjectId,
         memory: {
           ...workingMemory,
-          lastSingular: workingMemory.lastSingular?.id === targetObject.id ? null : workingMemory.lastSingular,
+          lastSingular: removedIds.has(workingMemory.lastSingular?.id) ? null : workingMemory.lastSingular,
         },
         logs: [createLogEntry('system', `OK. I removed the ${describeObject(targetObject)}.`)],
       };
@@ -884,6 +1114,41 @@ function App() {
         };
       }
 
+      if (clause.location.relation === 'in') {
+        const fitCheck = canObjectFitInBox(movingObject, targetObject, nextObjects);
+
+        if (!fitCheck.ok) {
+          return {
+            handled: true,
+            objects: nextObjects,
+            heldObjectId: nextHeldObjectId,
+            memory: nextMemory,
+            logs: [...actionLogs, createLogEntry('system', fitCheck.reason)],
+          };
+        }
+
+        const placementResult = placeObjectInBox(nextObjects, nextHeldObjectId, movingObject, targetObject);
+
+        return {
+          handled: true,
+          objects: placementResult.objects,
+          heldObjectId: placementResult.heldObjectId,
+          memory: {
+            ...nextMemory,
+            lastSingular: placementResult.placedObject ?? nextMemory.lastSingular,
+          },
+          logs: placementResult.placedObject
+            ? [
+                ...actionLogs,
+                createLogEntry(
+                  'system',
+                  `OK. I placed the ${describeObject(placementResult.placedObject)} in the ${describeObject(targetObject)}.`
+                ),
+              ]
+            : actionLogs,
+        };
+      }
+
       if (movingObject.id === targetObject.id) {
         return {
           handled: true,
@@ -977,6 +1242,48 @@ function App() {
       };
     }
 
+    if (clause.action === 'query_where') {
+      if (clause.directResolution.status !== 'resolved') {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          logs: [createLogEntry('system', `I can't answer that because the object reference is ${clause.directResolution.status}.`)],
+        };
+      }
+
+      const matches = clause.directResolution.candidates ?? clause.directResolution.matches ?? [];
+      const resolvedObjects = matches
+        .map((match) => findObjectById(match.id))
+        .filter(Boolean);
+
+      if (!resolvedObjects.length) {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          logs: [createLogEntry('system', 'I could not find that object in the world anymore.')],
+        };
+      }
+
+      const locationLog = resolvedObjects.length === 1
+        ? describeObjectLocation(resolvedObjects[0], workingObjects)
+        : `There are multiple matches: ${resolvedObjects.map((object) => describeObjectLocation(object, workingObjects)).join(' ')}`;
+
+      return {
+        handled: true,
+        objects: workingObjects,
+        heldObjectId: currentHeldObjectId,
+        memory: {
+          ...workingMemory,
+          lastSingular: resolvedObjects[0] ?? workingMemory.lastSingular,
+        },
+        logs: [createLogEntry('system', locationLog)],
+      };
+    }
+
     if (clause.action === 'query_yes_no') {
       const matches = clause.directResolution.candidates ?? clause.directResolution.matches ?? [];
       const resolvedObjects = matches
@@ -1016,7 +1323,7 @@ function App() {
 
   const applyLoadedSession = (session, successMessage) => {
     const restoredLogs = Array.isArray(session.logs) ? session.logs : [];
-    const restoredObjects = Array.isArray(session.objects) ? session.objects : [];
+    const restoredObjects = Array.isArray(session.objects) ? syncContainedObjects(session.objects) : [];
     const restoredHistory = Array.isArray(session.command_history)
       ? session.command_history.slice(-COMMAND_HISTORY_LIMIT)
       : [];
@@ -1204,7 +1511,8 @@ function App() {
             <div className="help-modal__header">
               <div>
                 <div className="help-modal__eyebrow">Command Help</div>
-                <h2 id="help-title" className="help-modal__title">How To Use SHRDLU</h2>
+                <h2 id="help-title" className="help-modal__title">SHRDLU-3JS</h2>
+                <div className="help-modal__subtitle">How To Use SHRDLU</div>
               </div>
               <button className="help-modal__close" type="button" onClick={() => setIsHelpOpen(false)}>
                 Close
@@ -1212,11 +1520,11 @@ function App() {
             </div>
             <div className="help-modal__content">
               <p>Type commands in the console to manipulate objects, ask questions, and manage sessions.</p>
-              <p><strong>Scene commands:</strong> <code>make new scene #</code>, <code>shuffle</code>, <code>add large blue cube</code>, <code>remove the green sphere</code></p>
-              <p><strong>Movement commands:</strong> <code>pick up the cube</code>, <code>put the blue sphere next to the red cube</code>, <code>drop</code></p>
+              <p><strong>Scene commands:</strong> <code>make new scene #</code>, <code>shuffle</code>, <code>add large blue cube</code>, <code>add jumbo red box</code></p>
+              <p><strong>Movement commands:</strong> <code>pick up the cube</code>, <code>put the blue sphere next to the red cube</code>, <code>put the cone in the green box</code>, <code>drop</code></p>
               <p><strong>Questions:</strong> <code>which cube is closest to the yellow sphere</code>, <code>is the blue sphere next to the red cube</code></p>
               <p><strong>Session commands:</strong> <code>save demo</code>, <code>load demo</code>, <code>list sessions</code>, <code>remove session demo</code></p>
-              <p><strong>Tip:</strong> references can use nested descriptions like <code>the cube which is smaller than the red cube</code>.</p>
+              <p><strong>Tip:</strong> references can use nested descriptions like <code>the cube which is smaller than the red cube</code> or <code>the sphere in the orange box</code>.</p>
             </div>
           </div>
         </div>

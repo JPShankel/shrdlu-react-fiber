@@ -116,7 +116,7 @@ const Console: React.FC<ConsoleProps> = ({ onCommand, logs }) => {
             flex: 1, background: 'transparent', border: 'none', outline: 'none',
             color: '#ffd84d', fontSize: '16px', fontFamily: 'inherit', textAlign: 'left'
           }}
-          placeholder="Type a command (e.g., 'add large blue cone')..."
+          placeholder="Type a command (e.g., 'add jumbo red box' or 'put the cone in the box')..."
         />
       </div>
     </div>

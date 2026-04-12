@@ -1,13 +1,14 @@
 const DETERMINERS = new Set(['the', 'a', 'an']);
 const CONJUNCTIONS = new Set(['and', 'then']);
 const COLOR_WORDS = new Set(['red', 'yellow', 'orange', 'green', 'blue']);
-const SIZE_WORDS = new Set(['small', 'medium', 'large']);
-const SHAPE_WORDS = new Set(['cube', 'sphere', 'cone', 'object', 'thing']);
+const SIZE_WORDS = new Set(['small', 'medium', 'large', 'jumbo']);
+const SHAPE_WORDS = new Set(['cube', 'sphere', 'cone', 'box', 'object', 'thing']);
 const REFERENCE_FILLER_WORDS = new Set(['that', 'which', 'is']);
 const SIZE_RANK = {
   small: 1,
   medium: 2,
   large: 3,
+  jumbo: 4,
 };
 const SIZE_HEIGHT = {
   small: 0.35,
@@ -24,10 +25,12 @@ const LOCATION_PATTERNS = [
   { relation: 'right_of', words: ['to', 'the', 'right', 'of'] },
   { relation: 'in_front_of', words: ['in', 'front', 'of'] },
   { relation: 'behind', words: ['behind'] },
+  { relation: 'in', words: ['inside', 'of'] },
+  { relation: 'in', words: ['inside'] },
+  { relation: 'in', words: ['in'] },
   { relation: 'on_top_of', words: ['on', 'top', 'of'] },
   { relation: 'on', words: ['on'] },
   { relation: 'onto', words: ['onto'] },
-  { relation: 'in', words: ['in'] },
 ];
 
 const COMMAND_PATTERNS = [
@@ -55,6 +58,8 @@ const COMMAND_PATTERNS = [
 ];
 
 const QUERY_PATTERNS = [
+  { action: 'query_where', words: ['where', 'is'] },
+  { action: 'query_where', words: ['where', 'are'] },
   { action: 'query_object', words: ['which'] },
   { action: 'query_object', words: ['which', 'object', 'is'] },
   { action: 'query_object', words: ['which', 'thing', 'is'] },
@@ -76,6 +81,8 @@ const REFERENCE_SPECIFIER_PATTERNS = [
   { relation: 'right_of', words: ['to', 'the', 'right', 'of'] },
   { relation: 'in_front_of', words: ['in', 'front', 'of'] },
   { relation: 'behind', words: ['behind'] },
+  { relation: 'in', words: ['inside', 'of'] },
+  { relation: 'in', words: ['inside'] },
   { relation: 'on_top_of', words: ['on', 'top', 'of'] },
   { relation: 'underneath', words: ['underneath'] },
   { relation: 'underneath', words: ['under'] },
@@ -463,6 +470,9 @@ const applySpecifier = (matches, specifier, objects, memory) => {
       filteredMatches = matches.filter((object) =>
         targetMatches.some((target) => object.basePosition[2] > target.basePosition[2] + AXIS_TOLERANCE)
       );
+      break;
+    case 'in':
+      filteredMatches = matches.filter((object) => targetMatches.some((target) => object.containerId === target.id));
       break;
     default:
       filteredMatches = matches;
