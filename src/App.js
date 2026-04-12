@@ -14,6 +14,10 @@ const sizeHeightMap = {
 const HOLD_LIFT = 0.6;
 const LATERAL_GAP = 1.4;
 const COMMAND_HISTORY_LIMIT = 25;
+const SHAPES = ['cube', 'sphere', 'cone'];
+const SIZES = ['small', 'medium', 'large'];
+const COLORS = ['red', 'yellow', 'orange', 'green', 'blue'];
+const DEFAULT_SCENE_COUNT = 5;
 
 const createObject = ({ id, type, size, color, x, z }) => {
   const basePosition = [x, sizeHeightMap[size], z];
@@ -32,6 +36,18 @@ const createObject = ({ id, type, size, color, x, z }) => {
 const createLogEntry = (type, text) => ({ type, text });
 const createObjectId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const POSITION_EPSILON = 0.001;
+const pickRandom = (items) => items[Math.floor(Math.random() * items.length)];
+const createSeededObjects = (count) =>
+  Array.from({ length: count }, () =>
+    createObject({
+      id: createObjectId(),
+      type: pickRandom(SHAPES),
+      size: pickRandom(SIZES),
+      color: pickRandom(COLORS),
+      x: Math.random() * 6 - 3,
+      z: Math.random() * 6 - 3,
+    })
+  );
 
 function App() {
   const [objects, setObjects] = useState([
@@ -128,6 +144,16 @@ function App() {
     const nextLogs = [createLogEntry('system', `TOKENS: ${result.tokens.join(' | ')}`)];
 
     result.clauses.forEach((clause, index) => {
+      if (clause.action === 'new_scene') {
+        nextLogs.push(
+          createLogEntry(
+            'system',
+            `CLAUSE ${index + 1}: action=${clause.action}; scene_count=${clause.sceneCount ?? 'default'}`
+          )
+        );
+        return;
+      }
+
       nextLogs.push(
         createLogEntry(
           'system',
@@ -149,6 +175,21 @@ function App() {
   };
 
   const describeObject = (object) => `${object.size} ${object.color} ${object.type}`;
+  const formatObjectList = (items) => {
+    if (!items.length) {
+      return '';
+    }
+
+    if (items.length === 1) {
+      return describeObject(items[0]);
+    }
+
+    if (items.length === 2) {
+      return `${describeObject(items[0])} and ${describeObject(items[1])}`;
+    }
+
+    return `${items.slice(0, -1).map(describeObject).join(', ')}, and ${describeObject(items[items.length - 1])}`;
+  };
   const getHalfHeight = (object) => sizeHeightMap[object.size];
   const getGroundedPosition = (object) => [object.basePosition[0], sizeHeightMap[object.size], object.basePosition[2]];
   const isStackingRelation = (relation) => relation === 'on' || relation === 'onto' || relation === 'on_top_of';
@@ -386,6 +427,25 @@ function App() {
 
   const executeAction = (clause, workingObjects, currentHeldObjectId, workingMemory) => {
     const findObjectById = (id) => workingObjects.find((object) => object.id === id);
+    const buildPickUpLogs = (pickUpResult, targetObject) => {
+      const nextLogs = [];
+
+      if (pickUpResult.releasedDescription) {
+        nextLogs.push(createLogEntry('system', `OK. I put down the ${pickUpResult.releasedDescription}.`));
+      }
+
+      pickUpResult.droppedObjects.forEach((droppedObject) => {
+        nextLogs.push(
+          createLogEntry(
+            'system',
+            `OK. I placed the ${describeObject(droppedObject)} on the ground before moving the ${describeObject(targetObject)}.`
+          )
+        );
+      });
+
+      nextLogs.push(createLogEntry('system', `OK. I picked up the ${describeObject(targetObject)}.`));
+      return nextLogs;
+    };
 
     if (clause.action === 'add') {
       const newObject = buildObjectFromReference(clause.directObject);
@@ -406,6 +466,30 @@ function App() {
         heldObjectId: currentHeldObjectId,
         memory: { ...workingMemory, lastSingular: newObject },
         logs: [createLogEntry('system', `OK. I added a ${describeObject(newObject)}.`)],
+      };
+    }
+
+    if (clause.action === 'new_scene') {
+      const sceneCount = clause.sceneCount ?? DEFAULT_SCENE_COUNT;
+
+      if (!Number.isInteger(sceneCount) || sceneCount <= 0) {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          logs: [createLogEntry('system', 'Please provide a positive number of objects for the new scene.')],
+        };
+      }
+
+      const nextObjects = createSeededObjects(sceneCount);
+
+      return {
+        handled: true,
+        objects: nextObjects,
+        heldObjectId: null,
+        memory: {},
+        logs: [createLogEntry('system', `OK. I created a new scene with ${sceneCount} objects.`)],
       };
     }
 
@@ -476,29 +560,13 @@ function App() {
       }
 
       const pickUpResult = pickUpObject(workingObjects, currentHeldObjectId, targetObject);
-      const nextLogs = [];
-
-      if (pickUpResult.releasedDescription) {
-        nextLogs.push(createLogEntry('system', `OK. I put down the ${pickUpResult.releasedDescription}.`));
-      }
-
-      pickUpResult.droppedObjects.forEach((droppedObject) => {
-        nextLogs.push(
-          createLogEntry(
-            'system',
-            `OK. I placed the ${describeObject(droppedObject)} on the ground before moving the ${describeObject(targetObject)}.`
-          )
-        );
-      });
-
-      nextLogs.push(createLogEntry('system', `OK. I picked up the ${describeObject(targetObject)}.`));
 
       return {
         handled: true,
         objects: pickUpResult.objects,
         heldObjectId: pickUpResult.heldObjectId,
         memory: { ...workingMemory, lastSingular: targetObject },
-        logs: nextLogs,
+        logs: buildPickUpLogs(pickUpResult, targetObject),
       };
     }
 
@@ -526,13 +594,15 @@ function App() {
     }
 
     if (clause.action === 'put' || clause.action === 'place' || clause.action === 'move') {
-      if (!currentHeldObjectId) {
+      const hasExplicitDirectObject = Boolean(clause.directObject?.raw || clause.directObject?.kind === 'pronoun');
+
+      if (!currentHeldObjectId && hasExplicitDirectObject && clause.directResolution.status !== 'resolved') {
         return {
           handled: true,
           objects: workingObjects,
           heldObjectId: currentHeldObjectId,
           memory: workingMemory,
-          logs: [createLogEntry('system', 'I need to be holding an object before I can place it.')],
+          logs: [createLogEntry('system', `I can't move that because the object reference is ${clause.directResolution.status}.`)],
         };
       }
 
@@ -556,16 +626,52 @@ function App() {
         };
       }
 
-      const movingObject = findObjectById(currentHeldObjectId);
+      let nextObjects = workingObjects;
+      let nextHeldObjectId = currentHeldObjectId;
+      let nextMemory = workingMemory;
+      const actionLogs = [];
+      const objectToMoveId = clause.directResolution.status === 'resolved'
+        ? clause.directResolution.matches[0].id
+        : currentHeldObjectId;
+      let movingObject = objectToMoveId ? findObjectById(objectToMoveId) : null;
       const locationMatch = clause.location.resolution.matches[0];
       const targetObject = locationMatch.id === 'ground' ? null : findObjectById(locationMatch.id);
+
+      if (clause.directResolution.status === 'resolved' && objectToMoveId !== currentHeldObjectId) {
+        if (!movingObject) {
+          return {
+            handled: true,
+            objects: workingObjects,
+            heldObjectId: currentHeldObjectId,
+            memory: workingMemory,
+            logs: [createLogEntry('system', 'I could not find that object in the world anymore.')],
+          };
+        }
+
+        const pickUpResult = pickUpObject(nextObjects, nextHeldObjectId, movingObject);
+        nextObjects = pickUpResult.objects;
+        nextHeldObjectId = pickUpResult.heldObjectId;
+        nextMemory = { ...nextMemory, lastSingular: movingObject };
+        actionLogs.push(...buildPickUpLogs(pickUpResult, movingObject));
+        movingObject = findObjectById(nextHeldObjectId);
+      }
+
+      if (!nextHeldObjectId) {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          logs: [createLogEntry('system', 'I need to be holding an object before I can place it.')],
+        };
+      }
 
       if (!movingObject) {
         return {
           handled: true,
-          objects: workingObjects,
+          objects: nextObjects,
           heldObjectId: null,
-          memory: workingMemory,
+          memory: nextMemory,
           logs: [createLogEntry('system', 'I lost track of the object I was holding.')],
         };
       }
@@ -581,68 +687,139 @@ function App() {
       }
 
       if (locationMatch.id === 'ground') {
-        const placementResult = placeObjectOnGround(workingObjects, currentHeldObjectId, movingObject);
+        const placementResult = placeObjectOnGround(nextObjects, nextHeldObjectId, movingObject);
         return {
           handled: true,
           objects: placementResult.objects,
           heldObjectId: placementResult.heldObjectId,
           memory: {
-            ...workingMemory,
+            ...nextMemory,
             lastSingular: placementResult.placedObject ?? workingMemory.lastSingular,
           },
           logs: placementResult.placedObject
-            ? [createLogEntry('system', `OK. I placed the ${describeObject(placementResult.placedObject)} on the ground.`)]
-            : [],
+            ? [...actionLogs, createLogEntry('system', `OK. I placed the ${describeObject(placementResult.placedObject)} on the ground.`)]
+            : actionLogs,
         };
       }
 
       if (movingObject.id === targetObject.id) {
         return {
           handled: true,
-          objects: workingObjects,
-          heldObjectId: currentHeldObjectId,
-          memory: workingMemory,
-          logs: [createLogEntry('system', 'I cannot place an object relative to itself.')],
+          objects: nextObjects,
+          heldObjectId: nextHeldObjectId,
+          memory: nextMemory,
+          logs: [...actionLogs, createLogEntry('system', 'I cannot place an object relative to itself.')],
         };
       }
 
       if (isStackingRelation(clause.location.relation) && !canBePlacedOnObject(movingObject)) {
         return {
           handled: true,
-          objects: workingObjects,
-          heldObjectId: currentHeldObjectId,
-          memory: workingMemory,
-          logs: [createLogEntry('system', `I cannot place the ${describeObject(movingObject)} on another object.`)],
+          objects: nextObjects,
+          heldObjectId: nextHeldObjectId,
+          memory: nextMemory,
+          logs: [...actionLogs, createLogEntry('system', `I cannot place the ${describeObject(movingObject)} on another object.`)],
         };
       }
 
       if (isStackingRelation(clause.location.relation) && !canSupportPlacedObject(targetObject)) {
         return {
           handled: true,
-          objects: workingObjects,
-          heldObjectId: currentHeldObjectId,
-          memory: workingMemory,
-          logs: [createLogEntry('system', `I cannot place anything on the ${describeObject(targetObject)}.`)],
+          objects: nextObjects,
+          heldObjectId: nextHeldObjectId,
+          memory: nextMemory,
+          logs: [...actionLogs, createLogEntry('system', `I cannot place anything on the ${describeObject(targetObject)}.`)],
         };
       }
 
-      const placementResult = placeHeldObject(workingObjects, currentHeldObjectId, movingObject, clause.location.relation, targetObject);
+      const placementResult = placeHeldObject(nextObjects, nextHeldObjectId, movingObject, clause.location.relation, targetObject);
       return {
         handled: true,
         objects: placementResult.objects,
         heldObjectId: placementResult.heldObjectId,
         memory: {
-          ...workingMemory,
-          lastSingular: placementResult.placedObject ?? workingMemory.lastSingular,
+          ...nextMemory,
+          lastSingular: placementResult.placedObject ?? nextMemory.lastSingular,
         },
         logs: placementResult.placedObject
           ? [
+              ...actionLogs,
               createLogEntry(
                 'system',
                 `OK. I placed the ${describeObject(placementResult.placedObject)} ${clause.location.relation.replaceAll('_', ' ')} the ${describeObject(targetObject)}.`
               ),
             ]
-          : [],
+          : actionLogs,
+      };
+    }
+
+    if (clause.action === 'query_object') {
+      if (clause.directResolution.status !== 'resolved') {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          logs: [createLogEntry('system', `I can't answer that because the object reference is ${clause.directResolution.status}.`)],
+        };
+      }
+
+      const matches = clause.directResolution.candidates ?? clause.directResolution.matches ?? [];
+      const resolvedObjects = matches
+        .map((match) => findObjectById(match.id))
+        .filter(Boolean);
+
+      if (!resolvedObjects.length) {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          logs: [createLogEntry('system', 'I could not find a matching object in the world anymore.')],
+        };
+      }
+
+      const answer = resolvedObjects.length === 1
+        ? `The matching object is the ${describeObject(resolvedObjects[0])}.`
+        : `The matching objects are the ${formatObjectList(resolvedObjects)}.`;
+
+      return {
+        handled: true,
+        objects: workingObjects,
+        heldObjectId: currentHeldObjectId,
+        memory: {
+          ...workingMemory,
+          lastSingular: resolvedObjects[0] ?? workingMemory.lastSingular,
+        },
+        logs: [createLogEntry('system', answer)],
+      };
+    }
+
+    if (clause.action === 'query_yes_no') {
+      const matches = clause.directResolution.candidates ?? clause.directResolution.matches ?? [];
+      const resolvedObjects = matches
+        .map((match) => findObjectById(match.id))
+        .filter(Boolean);
+
+      if (!resolvedObjects.length) {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          logs: [createLogEntry('system', `No, I can't find ${formatReference(clause.directObject)}.`)],
+        };
+      }
+
+      return {
+        handled: true,
+        objects: workingObjects,
+        heldObjectId: currentHeldObjectId,
+        memory: {
+          ...workingMemory,
+          lastSingular: resolvedObjects[0] ?? workingMemory.lastSingular,
+        },
+        logs: [createLogEntry('system', `Yes, ${formatReference(clause.directObject)} matches ${formatObjectList(resolvedObjects)}.`)],
       };
     }
 

@@ -31,6 +31,8 @@ const LOCATION_PATTERNS = [
 ];
 
 const COMMAND_PATTERNS = [
+  { action: 'new_scene', words: ['make', 'new', 'scene'] },
+  { action: 'new_scene', words: ['new', 'scene'] },
   { action: 'add', words: ['add'] },
   { action: 'remove', words: ['remove'] },
   { action: 'remove', words: ['delete'] },
@@ -41,6 +43,18 @@ const COMMAND_PATTERNS = [
   { action: 'put', words: ['put'] },
   { action: 'place', words: ['place'] },
   { action: 'move', words: ['move'] },
+];
+
+const QUERY_PATTERNS = [
+  { action: 'query_object', words: ['which'] },
+  { action: 'query_object', words: ['which', 'object', 'is'] },
+  { action: 'query_object', words: ['which', 'thing', 'is'] },
+  { action: 'query_object', words: ['which', 'one', 'is'] },
+  { action: 'query_object', words: ['what'] },
+  { action: 'query_object', words: ['what', 'object', 'is'] },
+  { action: 'query_object', words: ['what', 'thing', 'is'] },
+  { action: 'query_yes_no', words: ['is'] },
+  { action: 'query_yes_no', words: ['are'] },
 ];
 
 const REFERENCE_SPECIFIER_PATTERNS = [
@@ -97,6 +111,22 @@ const splitClauses = (tokens) => {
 
 const parseCommandWord = (tokens) => {
   for (const pattern of COMMAND_PATTERNS) {
+    if (matchesPattern(tokens, 0, pattern.words)) {
+      return {
+        action: pattern.action,
+        consumed: pattern.words.length,
+      };
+    }
+  }
+
+  return {
+    action: 'unknown',
+    consumed: 0,
+  };
+};
+
+const parseQueryWord = (tokens) => {
+  for (const pattern of QUERY_PATTERNS) {
     if (matchesPattern(tokens, 0, pattern.words)) {
       return {
         action: pattern.action,
@@ -264,13 +294,27 @@ const actionUsesDestination = (action) => action === 'put' || action === 'place'
 
 const parseClause = (tokens) => {
   const command = parseCommandWord(tokens);
-  const remaining = tokens.slice(command.consumed);
-  const locationStart = actionUsesDestination(command.action) ? findLocationStart(remaining, 0) : null;
+  const query = command.action === 'unknown' ? parseQueryWord(tokens) : { action: 'unknown', consumed: 0 };
+  const parsedVerb = command.action !== 'unknown' ? command : query;
+  const remaining = tokens.slice(parsedVerb.consumed);
+  const locationStart = actionUsesDestination(parsedVerb.action) ? findLocationStart(remaining, 0) : null;
 
   if (!locationStart) {
+    if (parsedVerb.action === 'new_scene') {
+      const requestedCount = Number.parseInt(remaining[0], 10);
+
+      return {
+        raw: tokens.join(' '),
+        action: parsedVerb.action,
+        directObject: parseReference([]),
+        location: null,
+        sceneCount: Number.isNaN(requestedCount) ? null : requestedCount,
+      };
+    }
+
     return {
       raw: tokens.join(' '),
-      action: command.action,
+      action: parsedVerb.action,
       directObject: parseReference(remaining),
       location: null,
     };
@@ -278,7 +322,7 @@ const parseClause = (tokens) => {
 
   return {
     raw: tokens.join(' '),
-    action: command.action,
+    action: parsedVerb.action,
     directObject: parseReference(remaining.slice(0, locationStart.index)),
     location: {
       relation: locationStart.relation,
@@ -324,32 +368,36 @@ const applySpecifier = (matches, specifier, objects, memory) => {
   switch (specifier.relation) {
     case 'nearest_to':
     case 'closest_to': {
+      const targetIds = new Set(targetMatches.map((target) => target.id));
+      const eligibleMatches = matches.filter((object) => !targetIds.has(object.id));
       let bestDistance = Number.POSITIVE_INFINITY;
 
-      matches.forEach((object) => {
+      eligibleMatches.forEach((object) => {
         const distance = Math.min(...targetMatches.map((target) => getPlanarDistance(object, target)));
         if (distance < bestDistance) {
           bestDistance = distance;
         }
       });
 
-      filteredMatches = matches.filter((object) => {
+      filteredMatches = eligibleMatches.filter((object) => {
         const distance = Math.min(...targetMatches.map((target) => getPlanarDistance(object, target)));
         return Math.abs(distance - bestDistance) < DISTANCE_TIE_EPSILON;
       });
       break;
     }
     case 'furthest_from': {
+      const targetIds = new Set(targetMatches.map((target) => target.id));
+      const eligibleMatches = matches.filter((object) => !targetIds.has(object.id));
       let bestDistance = Number.NEGATIVE_INFINITY;
 
-      matches.forEach((object) => {
+      eligibleMatches.forEach((object) => {
         const distance = Math.min(...targetMatches.map((target) => getPlanarDistance(object, target)));
         if (distance > bestDistance) {
           bestDistance = distance;
         }
       });
 
-      filteredMatches = matches.filter((object) => {
+      filteredMatches = eligibleMatches.filter((object) => {
         const distance = Math.min(...targetMatches.map((target) => getPlanarDistance(object, target)));
         return Math.abs(distance - bestDistance) < DISTANCE_TIE_EPSILON;
       });
@@ -537,6 +585,7 @@ export const parseCommand = (input, objects, memory = {}) => {
             resolution: locationResolution,
           }
         : null,
+      sceneCount: normalizedClause.sceneCount ?? null,
     };
   });
 
