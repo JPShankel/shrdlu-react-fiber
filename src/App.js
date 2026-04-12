@@ -3,7 +3,14 @@ import './App.css';
 import World from './World.tsx';
 import Console from './Console.tsx';
 import { parseCommand } from './parser';
-import { createClientSessionId, loadLatestSession, saveSession } from './lib/sessionStore';
+import {
+  createClientSessionId,
+  deleteSessionByName,
+  listSessions,
+  loadLatestSession,
+  loadSessionByName,
+  saveSession,
+} from './lib/sessionStore';
 
 const sizeHeightMap = {
   small: 0.35,
@@ -68,6 +75,8 @@ function App() {
   const [parserMemory, setParserMemory] = useState({});
   const [heldObjectId, setHeldObjectId] = useState(null);
   const [commandHistory, setCommandHistory] = useState([]);
+  const [activeSessionName, setActiveSessionName] = useState(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const sessionIdRef = useRef(createClientSessionId());
 
   useEffect(() => {
@@ -97,9 +106,15 @@ function App() {
       setHeldObjectId(result.data.held_object_id ?? null);
       setParserMemory(result.data.parser_memory ?? {});
       setCommandHistory(restoredHistory);
+      setActiveSessionName(result.data.session_name ?? null);
       setLogs([
         ...restoredLogs,
-        createLogEntry('system', 'Restored the most recent saved session.'),
+        createLogEntry(
+          'system',
+          result.data.session_name
+            ? `Restored the saved session "${result.data.session_name}".`
+            : 'Restored the most recent saved session.'
+        ),
       ]);
     });
 
@@ -107,6 +122,21 @@ function App() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isHelpOpen) {
+      return undefined;
+    }
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsHelpOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isHelpOpen]);
 
   const formatReference = (reference) => {
     if (!reference) {
@@ -149,6 +179,22 @@ function App() {
           createLogEntry(
             'system',
             `CLAUSE ${index + 1}: action=${clause.action}; scene_count=${clause.sceneCount ?? 'default'}`
+          )
+        );
+        return;
+      }
+
+      if (
+        clause.action === 'help' ||
+        clause.action === 'save_session' ||
+        clause.action === 'load_session' ||
+        clause.action === 'delete_session' ||
+        clause.action === 'list_sessions'
+      ) {
+        nextLogs.push(
+          createLogEntry(
+            'system',
+            `CLAUSE ${index + 1}: action=${clause.action}; session_name=${clause.sessionName ?? 'none'}`
           )
         );
         return;
@@ -442,7 +488,7 @@ function App() {
       };
     });
 
-  const executeAction = (clause, workingObjects, currentHeldObjectId, workingMemory) => {
+  const executeAction = (clause, workingObjects, currentHeldObjectId, workingMemory, currentActiveSessionName) => {
     const findObjectById = (id) => workingObjects.find((object) => object.id === id);
     const buildPickUpLogs = (pickUpResult, targetObject) => {
       const nextLogs = [];
@@ -518,7 +564,114 @@ function App() {
         objects: nextObjects,
         heldObjectId: currentHeldObjectId,
         memory: workingMemory,
+        sessionName: currentActiveSessionName,
         logs: [createLogEntry('system', 'OK. I shuffled the object positions.')],
+      };
+    }
+
+    if (clause.action === 'help') {
+      return {
+        handled: true,
+        objects: workingObjects,
+        heldObjectId: currentHeldObjectId,
+        memory: workingMemory,
+        sessionName: currentActiveSessionName,
+        sessionOperation: {
+          type: 'help',
+        },
+        logs: [],
+      };
+    }
+
+    if (clause.action === 'save_session') {
+      if (!clause.sessionName) {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          sessionName: currentActiveSessionName,
+          logs: [createLogEntry('system', 'Please provide a name, for example: save session demo.')],
+        };
+      }
+
+      return {
+        handled: true,
+        objects: workingObjects,
+        heldObjectId: currentHeldObjectId,
+        memory: workingMemory,
+        sessionName: clause.sessionName,
+        sessionOperation: {
+          type: 'save',
+          sessionName: clause.sessionName,
+        },
+        logs: [],
+      };
+    }
+
+    if (clause.action === 'load_session') {
+      if (!clause.sessionName) {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          sessionName: currentActiveSessionName,
+          logs: [createLogEntry('system', 'Please provide a session name to load.')],
+        };
+      }
+
+      return {
+        handled: true,
+        objects: workingObjects,
+        heldObjectId: currentHeldObjectId,
+        memory: workingMemory,
+        sessionName: currentActiveSessionName,
+        sessionOperation: {
+          type: 'load',
+          sessionName: clause.sessionName,
+        },
+        logs: [],
+      };
+    }
+
+    if (clause.action === 'delete_session') {
+      if (!clause.sessionName) {
+        return {
+          handled: true,
+          objects: workingObjects,
+          heldObjectId: currentHeldObjectId,
+          memory: workingMemory,
+          sessionName: currentActiveSessionName,
+          logs: [createLogEntry('system', 'Please provide a session name to remove.')],
+        };
+      }
+
+      return {
+        handled: true,
+        objects: workingObjects,
+        heldObjectId: currentHeldObjectId,
+        memory: workingMemory,
+        sessionName: currentActiveSessionName,
+        sessionOperation: {
+          type: 'delete',
+          sessionName: clause.sessionName,
+        },
+        logs: [],
+      };
+    }
+
+    if (clause.action === 'list_sessions') {
+      return {
+        handled: true,
+        objects: workingObjects,
+        heldObjectId: currentHeldObjectId,
+        memory: workingMemory,
+        sessionName: currentActiveSessionName,
+        sessionOperation: {
+          type: 'list',
+        },
+        logs: [],
       };
     }
 
@@ -861,7 +1014,26 @@ function App() {
     };
   };
 
-  const handleCommand = (cmd) => {
+  const applyLoadedSession = (session, successMessage) => {
+    const restoredLogs = Array.isArray(session.logs) ? session.logs : [];
+    const restoredObjects = Array.isArray(session.objects) ? session.objects : [];
+    const restoredHistory = Array.isArray(session.command_history)
+      ? session.command_history.slice(-COMMAND_HISTORY_LIMIT)
+      : [];
+
+    sessionIdRef.current = session.client_session_id || sessionIdRef.current;
+    setObjects(restoredObjects);
+    setHeldObjectId(session.held_object_id ?? null);
+    setParserMemory(session.parser_memory ?? {});
+    setCommandHistory(restoredHistory);
+    setActiveSessionName(session.session_name ?? null);
+    setLogs([
+      ...restoredLogs,
+      createLogEntry('system', successMessage),
+    ]);
+  };
+
+  const handleCommand = async (cmd) => {
     const userEntry = createLogEntry('user', cmd);
     const parsed = parseCommand(cmd, objects, parserMemory);
     const parseLogs = buildParseLogs(parsed);
@@ -869,11 +1041,13 @@ function App() {
     let workingObjects = objects;
     let workingHeldObjectId = heldObjectId;
     let workingMemory = parsed.memory;
+    let workingSessionName = activeSessionName;
     let handledAnyClause = false;
     const executionLogs = [];
+    const sessionOperations = [];
 
     parsed.clauses.forEach((clause) => {
-      const result = executeAction(clause, workingObjects, workingHeldObjectId, workingMemory);
+      const result = executeAction(clause, workingObjects, workingHeldObjectId, workingMemory, workingSessionName);
 
       if (result.handled) {
         handledAnyClause = true;
@@ -882,7 +1056,12 @@ function App() {
       workingObjects = result.objects;
       workingHeldObjectId = result.heldObjectId;
       workingMemory = result.memory;
+      workingSessionName = result.sessionName ?? workingSessionName;
       executionLogs.push(...result.logs);
+
+      if (result.sessionOperation) {
+        sessionOperations.push(result.sessionOperation);
+      }
     });
 
     const nextLogs = [...logs, userEntry, ...parseLogs, ...executionLogs];
@@ -896,14 +1075,102 @@ function App() {
       }
     }
 
+    for (const operation of sessionOperations) {
+      if (operation.type === 'save') {
+        const saveResult = await saveSession({
+          sessionId: sessionIdRef.current,
+          sessionName: operation.sessionName,
+          command: cmd,
+          commandHistory: nextCommandHistory,
+          objects: workingObjects,
+          logs: nextLogs,
+          parserMemory: workingMemory,
+          heldObjectId: workingHeldObjectId,
+        });
+
+        if (saveResult.ok) {
+          sessionIdRef.current = saveResult.data?.client_session_id || sessionIdRef.current;
+          workingSessionName = operation.sessionName;
+          nextLogs.push(createLogEntry('system', `OK. I saved this session as "${operation.sessionName}".`));
+        } else if (saveResult.skipped) {
+          nextLogs.push(createLogEntry('system', 'Session saving is unavailable because Supabase is not configured.'));
+        } else {
+          nextLogs.push(createLogEntry('system', `Session save failed: ${saveResult.error.message}.`));
+        }
+      }
+
+      if (operation.type === 'load') {
+        const loadResult = await loadSessionByName(operation.sessionName);
+
+        if (loadResult.ok && loadResult.data) {
+          applyLoadedSession(loadResult.data, `OK. I loaded the session "${operation.sessionName}".`);
+          return;
+        }
+
+        nextLogs.push(
+          createLogEntry(
+            'system',
+            loadResult.skipped
+              ? 'Session loading is unavailable because Supabase is not configured.'
+              : `I could not find a session named "${operation.sessionName}".`
+          )
+        );
+      }
+
+      if (operation.type === 'delete') {
+        const deleteResult = await deleteSessionByName(operation.sessionName);
+
+        if (deleteResult.ok && deleteResult.count > 0) {
+          if (workingSessionName === operation.sessionName) {
+            workingSessionName = null;
+          }
+
+          nextLogs.push(createLogEntry('system', `OK. I removed the session "${operation.sessionName}".`));
+        } else if (deleteResult.ok) {
+          nextLogs.push(createLogEntry('system', `I could not find a session named "${operation.sessionName}".`));
+        } else if (deleteResult.skipped) {
+          nextLogs.push(createLogEntry('system', 'Session removal is unavailable because Supabase is not configured.'));
+        } else {
+          nextLogs.push(createLogEntry('system', `Session removal failed: ${deleteResult.error.message}.`));
+        }
+      }
+
+      if (operation.type === 'list') {
+        const listResult = await listSessions();
+
+        if (listResult.ok) {
+          const namedSessions = listResult.data ?? [];
+          nextLogs.push(
+            createLogEntry(
+              'system',
+              namedSessions.length
+                ? `Saved sessions: ${namedSessions.map((session) => session.session_name).join(', ')}.`
+                : 'There are no named saved sessions yet.'
+            )
+          );
+        } else if (listResult.skipped) {
+          nextLogs.push(createLogEntry('system', 'Session listing is unavailable because Supabase is not configured.'));
+        } else {
+          nextLogs.push(createLogEntry('system', `Session listing failed: ${listResult.error.message}.`));
+        }
+      }
+
+      if (operation.type === 'help') {
+        setIsHelpOpen(true);
+        nextLogs.push(createLogEntry('system', 'Opened the help dialog.'));
+      }
+    }
+
     setObjects(workingObjects);
     setHeldObjectId(workingHeldObjectId);
     setParserMemory(workingMemory);
     setCommandHistory(nextCommandHistory);
+    setActiveSessionName(workingSessionName);
     setLogs(nextLogs);
 
     saveSession({
       sessionId: sessionIdRef.current,
+      sessionName: workingSessionName,
       command: cmd,
       commandHistory: nextCommandHistory,
       objects: workingObjects,
@@ -927,6 +1194,33 @@ function App() {
 
   return (
     <div className="App">
+      <div className="session-banner">
+        <span className="session-banner__label">Editing Session</span>
+        <span className="session-banner__name">{activeSessionName ?? 'Current Workspace'}</span>
+      </div>
+      {isHelpOpen ? (
+        <div className="help-modal-backdrop" onClick={() => setIsHelpOpen(false)}>
+          <div className="help-modal" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="help-title">
+            <div className="help-modal__header">
+              <div>
+                <div className="help-modal__eyebrow">Command Help</div>
+                <h2 id="help-title" className="help-modal__title">How To Use SHRDLU</h2>
+              </div>
+              <button className="help-modal__close" type="button" onClick={() => setIsHelpOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className="help-modal__content">
+              <p>Type commands in the console to manipulate objects, ask questions, and manage sessions.</p>
+              <p><strong>Scene commands:</strong> <code>make new scene #</code>, <code>shuffle</code>, <code>add large blue cube</code>, <code>remove the green sphere</code></p>
+              <p><strong>Movement commands:</strong> <code>pick up the cube</code>, <code>put the blue sphere next to the red cube</code>, <code>drop</code></p>
+              <p><strong>Questions:</strong> <code>which cube is closest to the yellow sphere</code>, <code>is the blue sphere next to the red cube</code></p>
+              <p><strong>Session commands:</strong> <code>save demo</code>, <code>load demo</code>, <code>list sessions</code>, <code>remove session demo</code></p>
+              <p><strong>Tip:</strong> references can use nested descriptions like <code>the cube which is smaller than the red cube</code>.</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <World objects={objects} />
       <Console logs={logs} onCommand={handleCommand} />
     </div>

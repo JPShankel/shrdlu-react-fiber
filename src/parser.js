@@ -31,6 +31,14 @@ const LOCATION_PATTERNS = [
 ];
 
 const COMMAND_PATTERNS = [
+  { action: 'help', words: ['help'] },
+  { action: 'list_sessions', words: ['list', 'sessions'] },
+  { action: 'save_session', words: ['save', 'session'] },
+  { action: 'save_session', words: ['save'] },
+  { action: 'load_session', words: ['load', 'session'] },
+  { action: 'load_session', words: ['load'] },
+  { action: 'delete_session', words: ['remove', 'session'] },
+  { action: 'delete_session', words: ['delete', 'session'] },
   { action: 'shuffle', words: ['shuffle'] },
   { action: 'new_scene', words: ['make', 'new', 'scene'] },
   { action: 'new_scene', words: ['new', 'scene'] },
@@ -313,6 +321,21 @@ const parseClause = (tokens) => {
       };
     }
 
+    if (
+      parsedVerb.action === 'save_session' ||
+      parsedVerb.action === 'load_session' ||
+      parsedVerb.action === 'delete_session' ||
+      parsedVerb.action === 'list_sessions'
+    ) {
+      return {
+        raw: tokens.join(' '),
+        action: parsedVerb.action,
+        directObject: parseReference([]),
+        location: null,
+        sessionName: remaining.join(' ').trim() || null,
+      };
+    }
+
     return {
       raw: tokens.join(' '),
       action: parsedVerb.action,
@@ -587,6 +610,7 @@ export const parseCommand = (input, objects, memory = {}) => {
           }
         : null,
       sceneCount: normalizedClause.sceneCount ?? null,
+      sessionName: normalizedClause.sessionName ?? null,
     };
   });
 

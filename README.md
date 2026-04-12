@@ -27,6 +27,7 @@ On startup, it also attempts to restore the most recently updated saved session.
 Create a `sessions` table in Supabase with columns compatible with this payload:
 
 - `client_session_id` `text` unique not null
+- `session_name` `text` unique
 - `last_command` `text`
 - `command_history` `jsonb` not null
 - `held_object_id` `text`
@@ -41,6 +42,7 @@ Example SQL:
 create table if not exists public.sessions (
   id uuid primary key default gen_random_uuid(),
   client_session_id text unique not null,
+  session_name text unique,
   last_command text,
   command_history jsonb not null default '[]'::jsonb,
   held_object_id text,
@@ -52,6 +54,7 @@ create table if not exists public.sessions (
 ```
 
 `command_history` stores the rolling session command list and is capped at 25 entries in the client.
+Named sessions can be managed from the console with commands like `save session demo`, `load demo`, `list sessions`, and `remove session demo`.
 
 The client reads either `REACT_APP_SUPABASE_*` or `NEXT_PUBLIC_SUPABASE_*` environment variables. If you change env values while the dev server is running, restart `npm start`.
 

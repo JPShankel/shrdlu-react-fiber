@@ -1,5 +1,107 @@
 .App {
   text-align: left;
+  position: relative;
+}
+
+.session-banner {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border: 1px solid rgba(20, 20, 20, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.session-banner__label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7b6f62;
+}
+
+.session-banner__name {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f1f1f;
+}
+
+.help-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(12, 16, 20, 0.42);
+  backdrop-filter: blur(8px);
+}
+
+.help-modal {
+  width: min(720px, 100%);
+  max-height: min(80vh, 760px);
+  overflow-y: auto;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fffdf8 0%, #f4efe5 100%);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(70, 54, 32, 0.12);
+  color: #251d16;
+}
+
+.help-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 24px 12px;
+}
+
+.help-modal__eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8b6d4f;
+  margin-bottom: 6px;
+}
+
+.help-modal__title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.help-modal__close {
+  border: none;
+  border-radius: 999px;
+  background: #1f1f1f;
+  color: #fff;
+  padding: 10px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.help-modal__content {
+  padding: 0 24px 24px;
+  line-height: 1.6;
+}
+
+.help-modal__content p {
+  margin: 0 0 14px;
+}
+
+.help-modal__content code {
+  background: rgba(37, 29, 22, 0.08);
+  padding: 2px 6px;
+  border-radius: 6px;
 }
 
 .App-logo {
