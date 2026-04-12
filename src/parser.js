@@ -31,6 +31,7 @@ const LOCATION_PATTERNS = [
 ];
 
 const COMMAND_PATTERNS = [
+  { action: 'shuffle', words: ['shuffle'] },
   { action: 'new_scene', words: ['make', 'new', 'scene'] },
   { action: 'new_scene', words: ['new', 'scene'] },
   { action: 'add', words: ['add'] },

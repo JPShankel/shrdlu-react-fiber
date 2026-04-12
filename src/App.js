@@ -425,6 +425,23 @@ function App() {
     };
   };
 
+  const shuffleObjects = (workingObjects, currentHeldObjectId) =>
+    workingObjects.map((object) => {
+      const basePosition = [
+        Math.random() * 6 - 3,
+        sizeHeightMap[object.size],
+        Math.random() * 6 - 3,
+      ];
+
+      return {
+        ...object,
+        basePosition,
+        position: object.id === currentHeldObjectId
+          ? [basePosition[0], basePosition[1] + HOLD_LIFT, basePosition[2]]
+          : [...basePosition],
+      };
+    });
+
   const executeAction = (clause, workingObjects, currentHeldObjectId, workingMemory) => {
     const findObjectById = (id) => workingObjects.find((object) => object.id === id);
     const buildPickUpLogs = (pickUpResult, targetObject) => {
@@ -490,6 +507,18 @@ function App() {
         heldObjectId: null,
         memory: {},
         logs: [createLogEntry('system', `OK. I created a new scene with ${sceneCount} objects.`)],
+      };
+    }
+
+    if (clause.action === 'shuffle') {
+      const nextObjects = shuffleObjects(workingObjects, currentHeldObjectId);
+
+      return {
+        handled: true,
+        objects: nextObjects,
+        heldObjectId: currentHeldObjectId,
+        memory: workingMemory,
+        logs: [createLogEntry('system', 'OK. I shuffled the object positions.')],
       };
     }
 

@@ -12,11 +12,38 @@ interface ConsoleProps {
 
 const Console: React.FC<ConsoleProps> = ({ onCommand, logs }) => {
   const [input, setInput] = useState('');
+  const [height, setHeight] = useState(220);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const resizeStateRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!resizeStateRef.current) {
+        return;
+      }
+
+      const deltaY = resizeStateRef.current.startY - event.clientY;
+      const maxHeight = Math.max(180, Math.floor(window.innerHeight * 0.8));
+      const nextHeight = Math.min(maxHeight, Math.max(140, resizeStateRef.current.startHeight + deltaY));
+      setHeight(nextHeight);
+    };
+
+    const stopResizing = () => {
+      resizeStateRef.current = null;
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResizing);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResizing);
+    };
+  }, []);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && input.trim()) {
@@ -25,22 +52,45 @@ const Console: React.FC<ConsoleProps> = ({ onCommand, logs }) => {
     }
   };
 
+  const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    resizeStateRef.current = {
+      startY: event.clientY,
+      startHeight: height,
+    };
+  };
+
   return (
     <div style={{
       position: 'fixed',
       bottom: 0,
       width: '100%',
-      height: '180px',
+      height: `${height}px`,
       background: 'rgba(20, 20, 20, 0.9)',
       color: '#00ff41',
       fontFamily: '"Courier New", Courier, monospace',
-      padding: '15px',
+      padding: '12px 15px 15px',
       boxSizing: 'border-box',
       borderTop: '2px solid #333',
       zIndex: 100,
-      textAlign: 'left'
+      textAlign: 'left',
+      display: 'flex',
+      flexDirection: 'column',
     }}>
-      <div style={{ height: '120px', overflowY: 'auto', marginBottom: '10px' }}>
+      <div
+        onPointerDown={handleResizeStart}
+        style={{
+          height: '10px',
+          margin: '-6px 0 8px',
+          cursor: 'ns-resize',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          touchAction: 'none',
+        }}
+      >
+        <div style={{ width: '56px', height: '3px', borderRadius: '999px', background: '#4a4a4a' }} />
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', marginBottom: '10px', minHeight: 0 }}>
         {logs.map((log, i) => (
           <div
             key={i}
