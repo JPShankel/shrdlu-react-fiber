@@ -39,6 +39,69 @@ const getObjectHalfHeightByType = (type, size) =>
   type === 'box'
     ? (boxInteriorHeightMap[size] + boxWallThicknessMap[size]) / 2
     : objectHalfHeightMap[size];
+const getContainerAnchorPosition = (container) => (container.isHeld ? container.position : container.basePosition);
+const getContainedBasePosition = (container, item, slotIndex) => {
+  const [containerX, containerY, containerZ] = getContainerAnchorPosition(container);
+  const containerHalfHeight = getObjectHalfHeightByType(container.type, container.size);
+  const itemHalfHeight = getObjectHalfHeightByType(item.type, item.size);
+  const floorY = containerY - containerHalfHeight + itemHalfHeight + 0.03;
+
+  if (container.size !== 'jumbo') {
+    return [containerX, floorY, containerZ];
+  }
+
+  const slotOffsets = [
+    [-boxInteriorSizeMap.jumbo * 0.25, -boxInteriorSizeMap.jumbo * 0.25],
+    [boxInteriorSizeMap.jumbo * 0.25, -boxInteriorSizeMap.jumbo * 0.25],
+    [-boxInteriorSizeMap.jumbo * 0.25, boxInteriorSizeMap.jumbo * 0.25],
+    [boxInteriorSizeMap.jumbo * 0.25, boxInteriorSizeMap.jumbo * 0.25],
+  ];
+  const [offsetX, offsetZ] = slotOffsets[slotIndex] ?? [0, 0];
+
+  return [containerX + offsetX, floorY, containerZ + offsetZ];
+};
+const syncContainedObjects = (workingObjects) => {
+  const objectMap = new Map(workingObjects.map((object) => [object.id, { ...object }]));
+  const childrenByContainer = new Map();
+
+  workingObjects.forEach((object) => {
+    if (!object.containerId) {
+      return;
+    }
+
+    if (!childrenByContainer.has(object.containerId)) {
+      childrenByContainer.set(object.containerId, []);
+    }
+
+    childrenByContainer.get(object.containerId).push(object.id);
+  });
+
+  const syncChildren = (containerId) => {
+    const container = objectMap.get(containerId);
+    const childIds = childrenByContainer.get(containerId) ?? [];
+
+    childIds.forEach((childId, slotIndex) => {
+      const child = objectMap.get(childId);
+      if (!container || !child) {
+        return;
+      }
+
+      const basePosition = getContainedBasePosition(container, child, slotIndex);
+      child.basePosition = basePosition;
+      child.position = child.isHeld ? [basePosition[0], basePosition[1] + HOLD_LIFT, basePosition[2]] : [...basePosition];
+      objectMap.set(childId, child);
+      syncChildren(childId);
+    });
+  };
+
+  workingObjects.forEach((object) => {
+    if (!object.containerId) {
+      syncChildren(object.id);
+    }
+  });
+
+  return workingObjects.map((object) => objectMap.get(object.id) ?? object);
+};
 
 const HOLD_LIFT = 0.6;
 const LATERAL_GAP = 1.4;
@@ -310,7 +373,6 @@ function App() {
 
     return descendantIds;
   };
-  const getContainerAnchorPosition = (container) => (container.isHeld ? container.position : container.basePosition);
   const describeObjectLocation = (object, workingObjects) => {
     if (object.isHeld) {
       return `The ${describeObject(object)} is currently being held.`;
@@ -329,68 +391,6 @@ function App() {
     }
 
     return `The ${describeObject(object)} is on the ground near x=${formatCoordinate(object.basePosition[0])}, z=${formatCoordinate(object.basePosition[2])}.`;
-  };
-  const getContainedBasePosition = (container, item, slotIndex) => {
-    const [containerX, containerY, containerZ] = getContainerAnchorPosition(container);
-    const containerHalfHeight = getHalfHeight(container);
-    const itemHalfHeight = getHalfHeight(item);
-    const floorY = containerY - containerHalfHeight + itemHalfHeight + 0.03;
-
-    if (container.size !== 'jumbo') {
-      return [containerX, floorY, containerZ];
-    }
-
-    const slotOffsets = [
-      [-boxInteriorSizeMap.jumbo * 0.25, -boxInteriorSizeMap.jumbo * 0.25],
-      [boxInteriorSizeMap.jumbo * 0.25, -boxInteriorSizeMap.jumbo * 0.25],
-      [-boxInteriorSizeMap.jumbo * 0.25, boxInteriorSizeMap.jumbo * 0.25],
-      [boxInteriorSizeMap.jumbo * 0.25, boxInteriorSizeMap.jumbo * 0.25],
-    ];
-    const [offsetX, offsetZ] = slotOffsets[slotIndex] ?? [0, 0];
-
-    return [containerX + offsetX, floorY, containerZ + offsetZ];
-  };
-  const syncContainedObjects = (workingObjects) => {
-    const objectMap = new Map(workingObjects.map((object) => [object.id, { ...object }]));
-    const childrenByContainer = new Map();
-
-    workingObjects.forEach((object) => {
-      if (!object.containerId) {
-        return;
-      }
-
-      if (!childrenByContainer.has(object.containerId)) {
-        childrenByContainer.set(object.containerId, []);
-      }
-
-      childrenByContainer.get(object.containerId).push(object.id);
-    });
-
-    const syncChildren = (containerId) => {
-      const container = objectMap.get(containerId);
-      const childIds = childrenByContainer.get(containerId) ?? [];
-
-      childIds.forEach((childId, slotIndex) => {
-        const child = objectMap.get(childId);
-        if (!container || !child) {
-          return;
-        }
-
-        const basePosition = getContainedBasePosition(container, child, slotIndex);
-        child.basePosition = basePosition;
-        child.position = child.isHeld ? [basePosition[0], basePosition[1] + HOLD_LIFT, basePosition[2]] : [...basePosition];
-        objectMap.set(childId, child);
-        syncChildren(childId);
-      });
-    };
-
-    workingObjects.forEach((object) => {
-      if (!object.containerId) {
-        syncChildren(object.id);
-      }
-    });
-
-    return workingObjects.map((object) => objectMap.get(object.id) ?? object);
   };
   const canObjectFitInBox = (item, box, workingObjects) => {
     if (!isBox(box)) {
