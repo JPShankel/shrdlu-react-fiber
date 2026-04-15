@@ -19,15 +19,17 @@ You may also see any lint errors in the console.
 Launches the test runner in the interactive watch mode.\
 See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
 
-## Supabase Session Saving
+## Supabase Auth And Session Saving
 
-The app includes a Supabase client and automatically saves the current session after each command.
-On startup, it also attempts to restore the most recently updated saved session.
+The app includes a Supabase client, simple email/password authentication, and automatic session saving.
+Users can also choose an anonymous mode, which keeps the app usable without writing any session data to Supabase.
+After a user signs in, the app restores that user's most recently updated saved session and scopes all session queries to the authenticated account.
 
 Create a `sessions` table in Supabase with columns compatible with this payload:
 
-- `client_session_id` `text` unique not null
-- `session_name` `text` unique
+- `user_id` `uuid` not null references `auth.users(id)` on delete cascade
+- `client_session_id` `text` not null
+- `session_name` `text`
 - `last_command` `text`
 - `command_history` `jsonb` not null
 - `held_object_id` `text`
@@ -41,8 +43,9 @@ Example SQL:
 ```sql
 create table if not exists public.sessions (
   id uuid primary key default gen_random_uuid(),
-  client_session_id text unique not null,
-  session_name text unique,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  client_session_id text not null,
+  session_name text,
   last_command text,
   command_history jsonb not null default '[]'::jsonb,
   held_object_id text,
@@ -51,10 +54,42 @@ create table if not exists public.sessions (
   parser_memory jsonb,
   updated_at timestamptz default timezone('utc', now())
 );
+
+create unique index if not exists sessions_user_client_session_idx
+  on public.sessions (user_id, client_session_id);
+
+create unique index if not exists sessions_user_session_name_idx
+  on public.sessions (user_id, session_name)
+  where session_name is not null;
+
+alter table public.sessions enable row level security;
+
+create policy "users can view their sessions"
+  on public.sessions
+  for select
+  using (auth.uid() = user_id);
+
+create policy "users can insert their sessions"
+  on public.sessions
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "users can update their sessions"
+  on public.sessions
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "users can delete their sessions"
+  on public.sessions
+  for delete
+  using (auth.uid() = user_id);
 ```
 
 `command_history` stores the rolling session command list and is capped at 25 entries in the client.
 Named sessions can be managed from the console with commands like `save session demo`, `load demo`, `list sessions`, and `remove session demo`.
+Session saving and loading require the user to sign in from the app's auth panel.
+Anonymous mode is local-only and skips all Supabase persistence.
 
 The client reads either `REACT_APP_SUPABASE_*` or `NEXT_PUBLIC_SUPABASE_*` environment variables. If you change env values while the dev server is running, restart `npm start`.
 

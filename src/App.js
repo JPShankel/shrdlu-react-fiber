@@ -4,6 +4,13 @@ import World from './World.tsx';
 import Console from './Console.tsx';
 import { parseCommand } from './parser';
 import {
+  getCurrentAuthState,
+  signInWithPassword,
+  signOut,
+  signUpWithPassword,
+  subscribeToAuthChanges,
+} from './lib/auth';
+import {
   createClientSessionId,
   deleteSessionByName,
   listSessions,
@@ -142,6 +149,11 @@ const createObject = ({ id, type, size, color, x, z }) => {
 const createLogEntry = (type, text) => ({ type, text });
 const createObjectId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const POSITION_EPSILON = 0.001;
+const AUTH_PREFERENCE_KEY = 'shrdlu-auth-preference';
+const AUTH_MODE_LABELS = {
+  sign_in: 'Sign In',
+  sign_up: 'Create Account',
+};
 const pickRandom = (items) => items[Math.floor(Math.random() * items.length)];
 const getPlacementRange = (count) => Math.max(3, Math.ceil(Math.sqrt(Math.max(count, 1))) * 1.8);
 const getRandomCoordinate = (count) => {
@@ -184,10 +196,73 @@ function App() {
   const [commandHistory, setCommandHistory] = useState([]);
   const [activeSessionName, setActiveSessionName] = useState(null);
   const [isHelpOpen, setIsHelpOpen] = useState(true);
+  const [authMode, setAuthMode] = useState('sign_in');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authUser, setAuthUser] = useState(null);
+  const [authPreference, setAuthPreference] = useState('auth');
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isAuthPending, setIsAuthPending] = useState(false);
+  const [authMessage, setAuthMessage] = useState('');
   const sessionIdRef = useRef(createClientSessionId());
 
   useEffect(() => {
     let isMounted = true;
+
+    Promise.resolve(getCurrentAuthState()).then((result) => {
+      if (!isMounted) {
+        return;
+      }
+
+      if (typeof window !== 'undefined') {
+        const savedPreference = window.localStorage.getItem(AUTH_PREFERENCE_KEY);
+        if (savedPreference === 'anonymous') {
+          setAuthPreference('anonymous');
+        }
+      }
+
+      if (result?.ok) {
+        setAuthUser(result.user ?? null);
+      }
+
+      setIsAuthReady(true);
+    });
+
+    const unsubscribe = subscribeToAuthChanges(({ user }) => {
+      if (!isMounted) {
+        return;
+      }
+
+      setAuthUser(user ?? null);
+      if (user) {
+        setAuthPreference('auth');
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(AUTH_PREFERENCE_KEY, 'auth');
+        }
+      }
+      setIsAuthReady(true);
+    }) || (() => {});
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthReady) {
+      return undefined;
+    }
+
+    let isMounted = true;
+
+    if (!authUser) {
+      sessionIdRef.current = createClientSessionId();
+      setActiveSessionName(null);
+      return () => {
+        isMounted = false;
+      };
+    }
 
     loadLatestSession().then((result) => {
       if (!isMounted || !result.ok || !result.data) {
@@ -213,22 +288,22 @@ function App() {
       setHeldObjectId(result.data.held_object_id ?? null);
       setParserMemory(result.data.parser_memory ?? {});
       setCommandHistory(restoredHistory);
-      setActiveSessionName(result.data.session_name ?? null);
-      setLogs([
-        ...restoredLogs,
+        setActiveSessionName(result.data.session_name ?? null);
+        setLogs([
+          ...restoredLogs,
         createLogEntry(
           'system',
           result.data.session_name
             ? `Restored the saved session "${result.data.session_name}".`
             : 'Restored the most recent saved session.'
         ),
-      ]);
+        ]);
     });
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [authUser, isAuthReady]);
 
   useEffect(() => {
     if (!isHelpOpen) {
@@ -244,6 +319,25 @@ function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isHelpOpen]);
+
+  const currentUserLabel = authUser?.email ?? 'Not signed in';
+  const isAnonymousMode = !authUser && authPreference === 'anonymous';
+  const authStatusText = authUser
+    ? `Signed in as ${currentUserLabel}`
+    : isAnonymousMode
+      ? 'Using the app anonymously. Work stays in this browser session only.'
+      : 'Sign in or continue anonymously.';
+  const sessionActionUnavailableMessage = (result, action) => {
+    if (result.reason === 'missing_auth') {
+      return `Sign in to ${action}. Anonymous mode does not save to Supabase.`;
+    }
+
+    if (result.reason === 'missing_config') {
+      return `${action[0].toUpperCase()}${action.slice(1)} is unavailable because Supabase is not configured.`;
+    }
+
+    return `${action[0].toUpperCase()}${action.slice(1)} failed: ${result.error.message}.`;
+  };
 
   const formatReference = (reference) => {
     if (!reference) {
@@ -1340,6 +1434,82 @@ function App() {
     ]);
   };
 
+  const handleAuthSubmit = async (event) => {
+    event.preventDefault();
+
+    const email = authEmail.trim();
+    const password = authPassword;
+
+    if (!email || !password) {
+      setAuthMessage('Enter both email and password.');
+      return;
+    }
+
+    setIsAuthPending(true);
+    setAuthMessage('');
+
+    const result = authMode === 'sign_up'
+      ? await signUpWithPassword({ email, password })
+      : await signInWithPassword({ email, password });
+
+    setIsAuthPending(false);
+
+    if (!result.ok) {
+      setAuthMessage(result.error.message);
+      return;
+    }
+
+    setAuthPreference('auth');
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(AUTH_PREFERENCE_KEY, 'auth');
+    }
+    setAuthPassword('');
+
+    if (authMode === 'sign_up' && !result.session) {
+      setAuthMessage('Account created. Check your email to confirm your account before signing in.');
+      return;
+    }
+
+    setAuthMessage(authMode === 'sign_up' ? 'Account created and signed in.' : 'Signed in.');
+  };
+
+  const handleSignOut = async () => {
+    setIsAuthPending(true);
+    setAuthMessage('');
+
+    const result = await signOut();
+
+    setIsAuthPending(false);
+
+    if (!result.ok) {
+      setAuthMessage(result.error.message);
+      return;
+    }
+
+    setAuthPassword('');
+    setAuthPreference('anonymous');
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(AUTH_PREFERENCE_KEY, 'anonymous');
+    }
+    setAuthMessage('Signed out. Anonymous mode is active.');
+  };
+
+  const handleUseAnonymously = () => {
+    setAuthPreference('anonymous');
+    setAuthMessage('Anonymous mode enabled. Supabase session saving is off.');
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(AUTH_PREFERENCE_KEY, 'anonymous');
+    }
+  };
+
+  const handleEnableSignIn = () => {
+    setAuthPreference('auth');
+    setAuthMessage('');
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(AUTH_PREFERENCE_KEY, 'auth');
+    }
+  };
+
   const handleCommand = async (cmd) => {
     const userEntry = createLogEntry('user', cmd);
     const parsed = parseCommand(cmd, objects, parserMemory);
@@ -1400,7 +1570,7 @@ function App() {
           workingSessionName = operation.sessionName;
           nextLogs.push(createLogEntry('system', `OK. I saved this session as "${operation.sessionName}".`));
         } else if (saveResult.skipped) {
-          nextLogs.push(createLogEntry('system', 'Session saving is unavailable because Supabase is not configured.'));
+          nextLogs.push(createLogEntry('system', sessionActionUnavailableMessage(saveResult, 'save sessions')));
         } else {
           nextLogs.push(createLogEntry('system', `Session save failed: ${saveResult.error.message}.`));
         }
@@ -1418,7 +1588,7 @@ function App() {
           createLogEntry(
             'system',
             loadResult.skipped
-              ? 'Session loading is unavailable because Supabase is not configured.'
+              ? sessionActionUnavailableMessage(loadResult, 'load sessions')
               : `I could not find a session named "${operation.sessionName}".`
           )
         );
@@ -1436,7 +1606,7 @@ function App() {
         } else if (deleteResult.ok) {
           nextLogs.push(createLogEntry('system', `I could not find a session named "${operation.sessionName}".`));
         } else if (deleteResult.skipped) {
-          nextLogs.push(createLogEntry('system', 'Session removal is unavailable because Supabase is not configured.'));
+          nextLogs.push(createLogEntry('system', sessionActionUnavailableMessage(deleteResult, 'remove saved sessions')));
         } else {
           nextLogs.push(createLogEntry('system', `Session removal failed: ${deleteResult.error.message}.`));
         }
@@ -1456,7 +1626,7 @@ function App() {
             )
           );
         } else if (listResult.skipped) {
-          nextLogs.push(createLogEntry('system', 'Session listing is unavailable because Supabase is not configured.'));
+          nextLogs.push(createLogEntry('system', sessionActionUnavailableMessage(listResult, 'list saved sessions')));
         } else {
           nextLogs.push(createLogEntry('system', `Session listing failed: ${listResult.error.message}.`));
         }
@@ -1504,6 +1674,72 @@ function App() {
       <div className="session-banner">
         <span className="session-banner__label">Editing Session</span>
         <span className="session-banner__name">{activeSessionName ?? 'Current Workspace'}</span>
+        <span className="session-banner__meta">{authUser ? 'Cloud saves enabled' : 'Anonymous local-only mode'}</span>
+      </div>
+      <div className="auth-panel">
+        <div className="auth-panel__eyebrow">Supabase Auth</div>
+        <div className="auth-panel__status">{isAuthReady ? authStatusText : 'Checking saved login...'}</div>
+        {authUser ? (
+          <button className="auth-panel__submit" type="button" onClick={handleSignOut} disabled={isAuthPending}>
+            {isAuthPending ? 'Working...' : 'Sign Out'}
+          </button>
+        ) : (
+          <>
+            {isAnonymousMode ? (
+              <div className="auth-panel__anonymous">
+                <div className="auth-panel__hint">Saved sessions are disabled until you sign in.</div>
+                <button className="auth-panel__secondary" type="button" onClick={handleEnableSignIn} disabled={isAuthPending}>
+                  Sign In Instead
+                </button>
+              </div>
+            ) : (
+              <form className="auth-panel__form" onSubmit={handleAuthSubmit}>
+                <div className="auth-panel__mode-switch">
+                  {Object.entries(AUTH_MODE_LABELS).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      className={`auth-panel__mode-button${authMode === mode ? ' auth-panel__mode-button--active' : ''}`}
+                      type="button"
+                      onClick={() => setAuthMode(mode)}
+                      disabled={isAuthPending}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <label className="auth-panel__field">
+                  <span>Email</span>
+                  <input
+                    className="auth-panel__input"
+                    type="email"
+                    value={authEmail}
+                    onChange={(event) => setAuthEmail(event.target.value)}
+                    autoComplete="email"
+                    disabled={isAuthPending}
+                  />
+                </label>
+                <label className="auth-panel__field">
+                  <span>Password</span>
+                  <input
+                    className="auth-panel__input"
+                    type="password"
+                    value={authPassword}
+                    onChange={(event) => setAuthPassword(event.target.value)}
+                    autoComplete={authMode === 'sign_up' ? 'new-password' : 'current-password'}
+                    disabled={isAuthPending}
+                  />
+                </label>
+                <button className="auth-panel__submit" type="submit" disabled={isAuthPending || !isAuthReady}>
+                  {isAuthPending ? 'Working...' : AUTH_MODE_LABELS[authMode]}
+                </button>
+                <button className="auth-panel__secondary" type="button" onClick={handleUseAnonymously} disabled={isAuthPending || !isAuthReady}>
+                  Use Anonymously
+                </button>
+              </form>
+            )}
+          </>
+        )}
+        {authMessage ? <div className="auth-panel__message">{authMessage}</div> : null}
       </div>
       {isHelpOpen ? (
         <div className="help-modal-backdrop" onClick={() => setIsHelpOpen(false)}>
@@ -1524,6 +1760,7 @@ function App() {
               <p><strong>Movement commands:</strong> <code>pick up the cube</code>, <code>put the blue sphere next to the red cube</code>, <code>put the cone in the green box</code>, <code>drop</code></p>
               <p><strong>Questions:</strong> <code>which cube is closest to the yellow sphere</code>, <code>is the blue sphere next to the red cube</code></p>
               <p><strong>Session commands:</strong> <code>save demo</code>, <code>load demo</code>, <code>list sessions</code>, <code>remove session demo</code></p>
+              <p><strong>Cloud saving:</strong> use the auth panel in the upper-right to create an account or sign in before working with saved sessions.</p>
               <p><strong>Tip:</strong> references can use nested descriptions like <code>the cube which is smaller than the red cube</code> or <code>the sphere in the orange box</code>.</p>
             </div>
           </div>

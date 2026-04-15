@@ -33,6 +33,112 @@
   color: #1f1f1f;
 }
 
+.session-banner__meta {
+  font-size: 12px;
+  color: #5f5a54;
+}
+
+.auth-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 120;
+  width: min(320px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid rgba(20, 20, 20, 0.14);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.auth-panel__eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7b6f62;
+}
+
+.auth-panel__status {
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #1f1f1f;
+}
+
+.auth-panel__form {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.auth-panel__mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.auth-panel__mode-button,
+.auth-panel__submit,
+.auth-panel__secondary {
+  border: 1px solid rgba(31, 31, 31, 0.14);
+  border-radius: 999px;
+  background: #f3ede4;
+  color: #1f1f1f;
+  padding: 10px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.auth-panel__mode-button--active,
+.auth-panel__submit {
+  background: #1f1f1f;
+  color: #fff;
+}
+
+.auth-panel__secondary {
+  background: transparent;
+  color: #1f1f1f;
+}
+
+.auth-panel__field {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  color: #5f5a54;
+}
+
+.auth-panel__input {
+  width: 100%;
+  border: 1px solid rgba(31, 31, 31, 0.14);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  color: #1f1f1f;
+  background: #fffdf9;
+  box-sizing: border-box;
+}
+
+.auth-panel__message {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #5f5a54;
+}
+
+.auth-panel__anonymous {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.auth-panel__hint {
+  font-size: 13px;
+  line-height: 1.4;
+  color: #5f5a54;
+}
+
 .help-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -118,6 +224,19 @@
 @media (prefers-reduced-motion: no-preference) {
   .App-logo {
     animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+@media (max-width: 720px) {
+  .session-banner,
+  .auth-panel {
+    position: static;
+    width: auto;
+    margin: 16px;
+  }
+
+  .App {
+    padding-top: 1px;
   }
 }
 

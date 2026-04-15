@@ -2,24 +2,49 @@ import { getSupabaseClient, isSupabaseConfigured } from './supabase';
 
 export const SESSIONS_TABLE = 'sessions';
 
-const buildSkippedResult = () => ({
+const buildSkippedResult = (message, reason) => ({
   ok: false,
   skipped: true,
-  error: new Error('Supabase environment variables are not configured.'),
+  reason,
+  error: new Error(message),
 });
 
-const ensureSupabase = () => {
+const ensureSupabase = async () => {
   if (!isSupabaseConfigured()) {
-    return null;
+    return buildSkippedResult('Supabase environment variables are not configured.', 'missing_config');
   }
 
-  return getSupabaseClient();
+  const supabase = getSupabaseClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error) {
+    return {
+      ok: false,
+      skipped: false,
+      error,
+    };
+  }
+
+  if (!user) {
+    return buildSkippedResult('You must sign in before accessing saved sessions.', 'missing_auth');
+  }
+
+  return {
+    ok: true,
+    skipped: false,
+    supabase,
+    user,
+  };
 };
 
-const findExistingNamedSessionRow = async (supabase, sessionName) => {
+const findExistingNamedSessionRow = async (supabase, userId, sessionName) => {
   const namedSessionResponse = await supabase
     .from(SESSIONS_TABLE)
     .select('id, client_session_id')
+    .eq('user_id', userId)
     .eq('session_name', sessionName)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -36,10 +61,11 @@ const findExistingNamedSessionRow = async (supabase, sessionName) => {
   };
 };
 
-const findExistingClientSessionRow = async (supabase, sessionId) => {
+const findExistingClientSessionRow = async (supabase, userId, sessionId) => {
   const clientSessionResponse = await supabase
     .from(SESSIONS_TABLE)
     .select('id, client_session_id')
+    .eq('user_id', userId)
     .eq('client_session_id', sessionId)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -57,6 +83,7 @@ const findExistingClientSessionRow = async (supabase, sessionId) => {
 };
 
 const buildSessionPayload = ({
+  userId,
   sessionId,
   sessionName = null,
   command,
@@ -66,6 +93,7 @@ const buildSessionPayload = ({
   parserMemory,
   heldObjectId,
 }) => ({
+  user_id: userId,
   client_session_id: sessionId,
   session_name: sessionName,
   last_command: command,
@@ -86,14 +114,17 @@ export const createClientSessionId = () => {
 };
 
 export const loadLatestSession = async () => {
-  const supabase = ensureSupabase();
+  const context = await ensureSupabase();
 
-  if (!supabase) {
-    return buildSkippedResult();
+  if (!context.ok) {
+    return context;
   }
+
+  const { supabase, user } = context;
   const { data, error } = await supabase
     .from(SESSIONS_TABLE)
     .select()
+    .eq('user_id', user.id)
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -123,15 +154,17 @@ export const saveSession = async ({
   parserMemory,
   heldObjectId,
 }) => {
-  const supabase = ensureSupabase();
+  const context = await ensureSupabase();
 
-  if (!supabase) {
-    return buildSkippedResult();
+  if (!context.ok) {
+    return context;
   }
 
+  const { supabase, user } = context;
   let data;
   let error;
   const payload = buildSessionPayload({
+    userId: user.id,
     sessionId,
     sessionName,
     command,
@@ -143,7 +176,7 @@ export const saveSession = async ({
   });
 
   if (sessionName) {
-    const existingNamedSessionResponse = await findExistingNamedSessionRow(supabase, sessionName);
+    const existingNamedSessionResponse = await findExistingNamedSessionRow(supabase, user.id, sessionName);
 
     if (existingNamedSessionResponse.error) {
       return {
@@ -158,6 +191,7 @@ export const saveSession = async ({
         .from(SESSIONS_TABLE)
         .update({
           ...payload,
+          user_id: user.id,
           client_session_id: existingNamedSessionResponse.data.client_session_id ?? sessionId,
         })
         .eq('id', existingNamedSessionResponse.data.id)
@@ -180,7 +214,7 @@ export const saveSession = async ({
       error = response.error;
     }
   } else {
-    const existingClientSessionResponse = await findExistingClientSessionRow(supabase, sessionId);
+    const existingClientSessionResponse = await findExistingClientSessionRow(supabase, user.id, sessionId);
 
     if (existingClientSessionResponse.error) {
       return {
@@ -228,15 +262,17 @@ export const saveSession = async ({
 };
 
 export const loadSessionByName = async (sessionName) => {
-  const supabase = ensureSupabase();
+  const context = await ensureSupabase();
 
-  if (!supabase) {
-    return buildSkippedResult();
+  if (!context.ok) {
+    return context;
   }
 
+  const { supabase, user } = context;
   const { data, error } = await supabase
     .from(SESSIONS_TABLE)
     .select()
+    .eq('user_id', user.id)
     .eq('session_name', sessionName)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -258,15 +294,17 @@ export const loadSessionByName = async (sessionName) => {
 };
 
 export const listSessions = async () => {
-  const supabase = ensureSupabase();
+  const context = await ensureSupabase();
 
-  if (!supabase) {
-    return buildSkippedResult();
+  if (!context.ok) {
+    return context;
   }
 
+  const { supabase, user } = context;
   const { data, error } = await supabase
     .from(SESSIONS_TABLE)
     .select('session_name, updated_at')
+    .eq('user_id', user.id)
     .not('session_name', 'is', null)
     .order('updated_at', { ascending: false });
 
@@ -298,15 +336,17 @@ export const listSessions = async () => {
 };
 
 export const deleteSessionByName = async (sessionName) => {
-  const supabase = ensureSupabase();
+  const context = await ensureSupabase();
 
-  if (!supabase) {
-    return buildSkippedResult();
+  if (!context.ok) {
+    return context;
   }
 
+  const { supabase, user } = context;
   const { error, count } = await supabase
     .from(SESSIONS_TABLE)
     .delete({ count: 'exact' })
+    .eq('user_id', user.id)
     .eq('session_name', sessionName);
 
   if (error) {
