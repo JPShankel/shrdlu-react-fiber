@@ -86,6 +86,11 @@ create policy "users can delete their sessions"
   using (auth.uid() = user_id);
 ```
 
+If you already have a `sessions` table from the older anonymous setup, run the migration in
+[supabase/migrations/20260415_add_sessions_user_id_rls.sql](/abs/path/c:/projects/shrdlu/supabase/migrations/20260415_add_sessions_user_id_rls.sql:1).
+That migration adds `user_id`, replaces the old global uniqueness rules with per-user indexes, and enables RLS policies.
+Older anonymous rows cannot be assigned to a real auth user automatically, so they will stay inaccessible until you manually update or delete them.
+
 `command_history` stores the rolling session command list and is capped at 25 entries in the client.
 Named sessions can be managed from the console with commands like `save session demo`, `load demo`, `list sessions`, and `remove session demo`.
 Session saving and loading require the user to sign in from the app's auth panel.
